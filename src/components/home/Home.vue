@@ -143,6 +143,14 @@ onMounted(() => {
           <span class="font-semibold text-gray-900">Mesas</span>
         </a>
 
+        <!-- Anotar Pedido -->
+        <a href="/pedidos" class="group flex flex-col items-center gap-3 rounded-xl bg-white p-6 shadow-md transition-all hover:shadow-xl hover:-translate-y-1">
+          <div class="flex h-16 w-16 items-center justify-center rounded-full bg-blue-100 text-blue-800 transition-colors group-hover:bg-blue-800 group-hover:text-white">
+            <Icon icon="mdi:notebook-edit" class="h-8 w-8" />
+          </div>
+          <span class="font-semibold text-gray-900">Anotar Pedido</span>
+        </a>
+
         <!-- Pedidos -->
         <button class="group flex flex-col items-center gap-3 rounded-xl bg-white p-6 shadow-md transition-all hover:shadow-xl hover:-translate-y-1">
           <div class="flex h-16 w-16 items-center justify-center rounded-full bg-yellow-100 text-yellow-800 transition-colors group-hover:bg-yellow-800 group-hover:text-white">
