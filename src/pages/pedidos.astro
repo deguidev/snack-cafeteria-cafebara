@@ -1,8 +1,10 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import AnotarPedidoView from '../components/pedidos/AnotarPedido.vue';
+import ListaPedidos from '../components/pedidos/ListaPedidos.vue';
 ---
 
-<Layout>
-	<AnotarPedidoView client:load />
+<Layout title="Lista de Pedidos - Cafetería">
+  <main>
+    <ListaPedidos client:load />
+  </main>
 </Layout>

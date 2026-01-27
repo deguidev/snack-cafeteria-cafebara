@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { Icon } from '@iconify/vue';
 
 interface Producto {
@@ -17,10 +17,9 @@ interface ItemPedido {
   cantidad: number;
 }
 
-interface Mesa {
-  numero: number;
-  ubicacion?: string;
-  capacidad?: number;
+interface DeliveryInfo {
+  telefono: string;
+  direccion: string;
 }
 
 // Props
@@ -29,6 +28,9 @@ const props = defineProps<{
   mesaNumero: number | null;
   nombreCliente: string;
   mostrarCarrito: boolean;
+  tipoPedido: 'para_servir' | 'para_llevar' | 'delivery' | null;
+  telefono: string;
+  direccion: string;
 }>();
 
 // Emits
@@ -36,24 +38,16 @@ const emit = defineEmits<{
   'update:mesaNumero': [value: number | null];
   'update:nombreCliente': [value: string];
   'update:mostrarCarrito': [value: boolean];
+  'update:tipoPedido': [value: 'para_servir' | 'para_llevar' | 'delivery' | null];
+  'update:telefono': [value: string];
+  'update:direccion': [value: string];
   'agregarProducto': [producto: Producto];
   'quitarProducto': [productoId: string];
   'eliminarProducto': [productoId: string];
   'guardarPedido': [];
   'limpiarPedido': [];
+  'redirectToPedidos': [];
 }>();
-
-// Datos de mesas (reemplazar con datos de Supabase cuando esté listo)
-const mesasDisponibles = ref<Mesa[]>([
-  { numero: 1, ubicacion: 'Interior', capacidad: 4 },
-  { numero: 2, ubicacion: 'Interior', capacidad: 4 },
-  { numero: 3, ubicacion: 'Interior', capacidad: 2 },
-  { numero: 4, ubicacion: 'Terraza', capacidad: 6 },
-  { numero: 5, ubicacion: 'Terraza', capacidad: 4 },
-  { numero: 6, ubicacion: 'Terraza', capacidad: 2 },
-  { numero: 7, ubicación: 'VIP', capacidad: 8 },
-  { numero: 8, ubicación: 'VIP', capacidad: 6 },
-]);
 
 // Computed
 const totalPedido = computed(() => {
@@ -63,6 +57,12 @@ const totalPedido = computed(() => {
 const cantidadTotal = computed(() => {
   return props.pedidoActual.reduce((sum, item) => sum + item.cantidad, 0);
 });
+
+// Methods
+const handleGuardarPedido = () => {
+  emit('guardarPedido');
+  emit('redirectToPedidos');
+};
 </script>
 
 <template>
@@ -103,36 +103,118 @@ const cantidadTotal = computed(() => {
         </div>
       </div>
 
-      <!-- Información de mesa y cliente -->
-      <div class="border-b border-gray-200 bg-gray-50 p-4 space-y-3">
+      <!-- Tipo de Pedido (Obligatorio) -->
+      <div class="border-b border-gray-200 bg-linear-to-r from-amber-50 to-orange-50 p-3">
         <div>
+          <label class="mb-2 flex items-center gap-2 text-xs font-bold text-gray-700">
+            <Icon icon="mdi:clipboard-check" class="h-4 w-4 text-amber-600" />
+            Tipo de Pedido <span class="text-red-500">*</span>
+          </label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <button
+              @click="emit('update:tipoPedido', 'para_servir')"
+              :class="[
+                'flex flex-col items-center justify-center rounded-lg border px-2 py-2 text-xs font-semibold transition-all active:scale-95',
+                tipoPedido === 'para_servir'
+                  ? 'border-amber-500 bg-amber-100 text-amber-900 shadow-sm'
+                  : 'border-gray-300 bg-white text-gray-700 hover:border-amber-400 hover:bg-amber-50'
+              ]"
+            >
+              <span class="text-sm mb-0.5">🍽️</span>
+              <span class="font-bold">Para Servir</span>
+            </button>
+            <button
+              @click="emit('update:tipoPedido', 'para_llevar')"
+              :class="[
+                'flex flex-col items-center justify-center rounded-lg border px-2 py-2 text-xs font-semibold transition-all active:scale-95',
+                tipoPedido === 'para_llevar'
+                  ? 'border-amber-500 bg-amber-100 text-amber-900 shadow-sm'
+                  : 'border-gray-300 bg-white text-gray-700 hover:border-amber-400 hover:bg-amber-50'
+              ]"
+            >
+              <span class="text-sm mb-0.5">🥡</span>
+              <span class="font-bold">Para Llevar</span>
+            </button>
+            <button
+              @click="emit('update:tipoPedido', 'delivery')"
+              :class="[
+                'flex flex-col items-center justify-center rounded-lg border px-2 py-2 text-xs font-semibold transition-all active:scale-95',
+                tipoPedido === 'delivery'
+                  ? 'border-amber-500 bg-amber-100 text-amber-900 shadow-sm'
+                  : 'border-gray-300 bg-white text-gray-700 hover:border-amber-400 hover:bg-amber-50'
+              ]"
+            >
+              <span class="text-sm mb-0.5">🏠</span>
+              <span class="font-bold">Delivery</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Información de mesa y cliente (condicional) -->
+      <div v-if="tipoPedido" class="border-b border-gray-200 bg-gray-50 p-4 space-y-3">
+        <!-- Mesa (solo para "Para Servir") -->
+        <div v-if="tipoPedido === 'para_servir'">
           <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
             <Icon icon="mdi:table-furniture" class="h-4 w-4 text-amber-600" />
-            Asignar Mesa
+            Mesa # <span class="text-red-500">*</span>
           </label>
           <select
-            :value="mesaNumero || ''"
+            :value="mesaNumero"
             @change="emit('update:mesaNumero', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
-            class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm font-semibold focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200 appearance-none bg-white cursor-pointer"
+            class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm font-semibold focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
           >
-            <option value="" disabled>Selecciona una mesa</option>
-            <option v-for="mesa in mesasDisponibles" :key="mesa.numero" :value="mesa.numero">
-              Mesa {{ mesa.numero }} {{ mesa.ubicacion ? `- ${mesa.ubicacion}` : '' }} {{ mesa.capacidad ? `(${mesa.capacidad} personas)` : '' }}
-            </option>
+            <option :value="null">Selecciona una mesa</option>
+            <option v-for="n in 20" :key="n" :value="n">Mesa {{ n }}</option>
           </select>
         </div>
-        <div>
+
+        <!-- Cliente (obligatorio para Para Llevar y Delivery) -->
+        <div :class="{ 'opacity-75': tipoPedido === 'para_servir' }">
           <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
             <Icon icon="mdi:account" class="h-4 w-4 text-amber-600" />
-            Cliente (opcional)
+            Cliente
+            <span v-if="tipoPedido !== 'para_servir'" class="text-red-500">*</span>
+            <span v-else class="text-gray-400">(opcional)</span>
           </label>
           <input
             :value="nombreCliente"
             @input="emit('update:nombreCliente', ($event.target as HTMLInputElement).value)"
             type="text"
-            placeholder="Nombre del cliente"
+            :placeholder="tipoPedido === 'para_servir' ? 'Nombre del cliente (opcional)' : 'Nombre del cliente'"
             class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            :required="tipoPedido !== 'para_servir'"
           />
+        </div>
+
+        <!-- Información adicional para Delivery -->
+        <div v-if="tipoPedido === 'delivery'" class="space-y-3">
+          <div>
+            <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
+              <Icon icon="mdi:phone" class="h-4 w-4 text-amber-600" />
+              Teléfono <span class="text-red-500">*</span>
+            </label>
+            <input
+              :value="telefono"
+              @input="emit('update:telefono', ($event.target as HTMLInputElement).value)"
+              type="tel"
+              placeholder="Número de teléfono"
+              class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            />
+          </div>
+          <div>
+            <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
+              <Icon icon="mdi:map-marker" class="h-4 w-4 text-amber-600" />
+              Dirección <span class="text-red-500">*</span>
+            </label>
+            <textarea
+              :value="direccion"
+              @input="emit('update:direccion', ($event.target as HTMLTextAreaElement).value)"
+              placeholder="Dirección de entrega"
+              rows="2"
+              class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            ></textarea>
+          </div>
         </div>
       </div>
 
@@ -213,7 +295,7 @@ const cantidadTotal = computed(() => {
           </button>
           
           <button
-            @click="emit('guardarPedido')"
+            @click="handleGuardarPedido"
             :disabled="pedidoActual.length === 0"
             class="flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-3 text-sm font-bold text-white shadow-lg transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50 active:scale-95"
           >
