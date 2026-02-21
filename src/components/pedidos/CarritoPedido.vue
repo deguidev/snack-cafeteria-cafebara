@@ -1,26 +1,117 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { Icon } from '@iconify/vue';
+import { supabase } from '../../lib/supabaseClient';
 
 interface Producto {
   id: string;
   nombre: string;
   descripcion: string;
   precio: number;
-  categoria: 'bebidas' | 'cafes' | 'platos' | 'postres';
+  categoria_id: string;
+  subcategoria_id: string | null;
   imagen_url?: string;
   disponible: boolean;
+}
+
+interface Modificador {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  tipo: 'extra' | 'sin' | 'sustitucion';
+  precio_adicional: number;
+  categoria_id: string | null;
+  activo: boolean;
+}
+
+interface Mesa {
+  id: string;
+  numero: number;
+  capacidad: number;
+  estado: 'disponible' | 'ocupada' | 'reservada' | 'mantenimiento';
+  ubicacion: string;
+  activo: boolean;
+}
+
+interface ItemModificador {
+  modificador: Modificador;
+  cantidad: number;
 }
 
 interface ItemPedido {
   producto: Producto;
   cantidad: number;
+  modificadores?: ItemModificador[];
 }
 
-interface DeliveryInfo {
-  telefono: string;
-  direccion: string;
-}
+// Estado local
+const mostrarCliente = ref(false);
+const itemExpandido = ref<string | null>(null);
+const modificadoresDisponibles = ref<Modificador[]>([]);
+const mesasDisponibles = ref<Mesa[]>([]);
+const loadingModificadores = ref(true);
+const loadingMesas = ref(true);
+
+// Cargar modificadores desde Supabase
+const cargarModificadores = async () => {
+  try {
+    loadingModificadores.value = true;
+    const { data, error } = await supabase
+      .from('modificadores')
+      .select('*')
+      .eq('activo', true)
+      .order('tipo')
+      .order('orden');
+
+    if (error) throw error;
+    modificadoresDisponibles.value = data || [];
+  } catch (err) {
+    console.error('Error cargando modificadores:', err);
+  } finally {
+    loadingModificadores.value = false;
+  }
+};
+
+// Cargar mesas disponibles desde Supabase
+const cargarMesas = async () => {
+  try {
+    loadingMesas.value = true;
+    const { data, error } = await supabase
+      .from('mesas')
+      .select('*')
+      .eq('activo', true)
+      .order('numero');
+
+    if (error) throw error;
+    mesasDisponibles.value = data || [];
+  } catch (err) {
+    console.error('Error cargando mesas:', err);
+  } finally {
+    loadingMesas.value = false;
+  }
+};
+
+// Filtrar modificadores por tipo
+const modificadoresExtras = computed(() => 
+  modificadoresDisponibles.value.filter(m => m.tipo === 'extra')
+);
+const modificadoresSin = computed(() => 
+  modificadoresDisponibles.value.filter(m => m.tipo === 'sin')
+);
+const modificadoresSustitucion = computed(() => 
+  modificadoresDisponibles.value.filter(m => m.tipo === 'sustitucion')
+);
+
+// Mesas disponibles para selección (no ocupadas)
+const mesasParaSeleccion = computed(() => 
+  mesasDisponibles.value.filter(m => m.estado === 'disponible' || m.estado === 'reservada')
+);
+
+// Cargar datos al montar
+onMounted(() => {
+  cargarModificadores();
+  cargarMesas();
+});
 
 // Props
 const props = defineProps<{
@@ -51,8 +142,28 @@ const emit = defineEmits<{
 
 // Computed
 const totalPedido = computed(() => {
-  return props.pedidoActual.reduce((sum, item) => sum + (item.producto.precio * item.cantidad), 0);
+  return props.pedidoActual.reduce((sum, item) => {
+    const precioBase = item.producto.precio * item.cantidad;
+    const precioModificadores = (item.modificadores || []).reduce(
+      (modSum, mod) => modSum + (mod.modificador.precio_adicional * mod.cantidad * item.cantidad), 0
+    );
+    return sum + precioBase + precioModificadores;
+  }, 0);
 });
+
+// Calcular subtotal de un item incluyendo modificadores
+const calcularSubtotalItem = (item: ItemPedido) => {
+  const precioBase = item.producto.precio * item.cantidad;
+  const precioModificadores = (item.modificadores || []).reduce(
+    (sum, mod) => sum + (mod.modificador.precio_adicional * mod.cantidad * item.cantidad), 0
+  );
+  return precioBase + precioModificadores;
+};
+
+// Toggle expandir item para modificadores
+const toggleExpandirItem = (itemId: string) => {
+  itemExpandido.value = itemExpandido.value === itemId ? null : itemId;
+};
 
 const cantidadTotal = computed(() => {
   return props.pedidoActual.reduce((sum, item) => sum + item.cantidad, 0);
@@ -61,7 +172,33 @@ const cantidadTotal = computed(() => {
 // Methods
 const handleGuardarPedido = () => {
   emit('guardarPedido');
-  emit('redirectToPedidos');
+  // La redirección se maneja en AnotarPedido.vue después de guardar exitosamente
+};
+
+// Agregar modificador a un item
+const agregarModificador = (item: ItemPedido, modificador: Modificador) => {
+  if (!item.modificadores) {
+    item.modificadores = [];
+  }
+  const existente = item.modificadores.find(m => m.modificador.id === modificador.id);
+  if (existente) {
+    existente.cantidad++;
+  } else {
+    item.modificadores.push({ modificador, cantidad: 1 });
+  }
+};
+
+// Quitar modificador de un item
+const quitarModificador = (item: ItemPedido, modificadorId: string) => {
+  if (!item.modificadores) return;
+  const index = item.modificadores.findIndex(m => m.modificador.id === modificadorId);
+  if (index !== -1) {
+    if (item.modificadores[index].cantidad > 1) {
+      item.modificadores[index].cantidad--;
+    } else {
+      item.modificadores.splice(index, 1);
+    }
+  }
 };
 </script>
 
@@ -155,35 +292,74 @@ const handleGuardarPedido = () => {
       <div v-if="tipoPedido" class="border-b border-gray-200 bg-gray-50 p-4 space-y-3">
         <!-- Mesa (solo para "Para Servir") -->
         <div v-if="tipoPedido === 'para_servir'">
-          <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
-            <Icon icon="mdi:table-furniture" class="h-4 w-4 text-amber-600" />
-            Mesa # <span class="text-red-500">*</span>
-          </label>
-          <select
-            :value="mesaNumero"
-            @change="emit('update:mesaNumero', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
-            class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm font-semibold focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
-          >
-            <option :value="null">Selecciona una mesa</option>
-            <option v-for="n in 20" :key="n" :value="n">Mesa {{ n }}</option>
-          </select>
+          <div class="flex items-center gap-3">
+            <!-- Select de Mesa -->
+            <div class="flex-1">
+              <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
+                <Icon icon="mdi:table-furniture" class="h-4 w-4 text-amber-600" />
+                Mesa # <span class="text-red-500">*</span>
+              </label>
+              <select
+                :value="mesaNumero"
+                @change="emit('update:mesaNumero', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
+                class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm font-semibold focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+              >
+                <option :value="null">Selecciona mesa</option>
+                <option 
+                  v-for="mesa in mesasParaSeleccion" 
+                  :key="mesa.id" 
+                  :value="mesa.numero"
+                >
+                  Mesa {{ mesa.numero }} ({{ mesa.capacidad }} pers.) - {{ mesa.ubicacion }}
+                </option>
+              </select>
+            </div>
+            
+            <!-- Switch para agregar cliente -->
+            <div class="flex flex-col items-center pt-5">
+              <button
+                @click="mostrarCliente = !mostrarCliente"
+                :class="[
+                  'relative h-6 w-11 rounded-full transition-colors duration-200',
+                  mostrarCliente ? 'bg-amber-500' : 'bg-gray-300'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200',
+                    mostrarCliente ? 'translate-x-5' : 'translate-x-0'
+                  ]"
+                ></span>
+              </button>
+              <span class="text-[10px] font-semibold text-gray-500 mt-1">Cliente</span>
+            </div>
+          </div>
+          
+          <!-- Input de cliente (condicional con switch) -->
+          <div v-if="mostrarCliente" class="mt-3">
+            <input
+              :value="nombreCliente"
+              @input="emit('update:nombreCliente', ($event.target as HTMLInputElement).value)"
+              type="text"
+              placeholder="Nombre del cliente"
+              class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+            />
+          </div>
         </div>
 
         <!-- Cliente (obligatorio para Para Llevar y Delivery) -->
-        <div :class="{ 'opacity-75': tipoPedido === 'para_servir' }">
+        <div v-if="tipoPedido !== 'para_servir'">
           <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
             <Icon icon="mdi:account" class="h-4 w-4 text-amber-600" />
-            Cliente
-            <span v-if="tipoPedido !== 'para_servir'" class="text-red-500">*</span>
-            <span v-else class="text-gray-400">(opcional)</span>
+            Cliente <span class="text-red-500">*</span>
           </label>
           <input
             :value="nombreCliente"
             @input="emit('update:nombreCliente', ($event.target as HTMLInputElement).value)"
             type="text"
-            :placeholder="tipoPedido === 'para_servir' ? 'Nombre del cliente (opcional)' : 'Nombre del cliente'"
+            placeholder="Nombre del cliente"
             class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
-            :required="tipoPedido !== 'para_servir'"
+            required
           />
         </div>
 
@@ -231,40 +407,145 @@ const handleGuardarPedido = () => {
         <div
           v-for="item in pedidoActual"
           :key="item.producto.id"
-          class="flex items-center gap-3 rounded-lg border-2 border-gray-200 bg-white p-3 shadow-sm transition-all hover:border-amber-300 hover:shadow-md"
+          class="rounded-lg border-2 border-gray-200 bg-white shadow-sm transition-all hover:border-amber-300 hover:shadow-md overflow-hidden"
         >
-          <!-- Info del producto -->
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-bold text-gray-900 truncate">{{ item.producto.nombre }}</p>
-            <p class="text-xs text-gray-500 mt-0.5">S/ {{ item.producto.precio.toFixed(2) }} c/u</p>
-            <p class="text-sm font-bold text-amber-700 mt-1">S/ {{ (item.producto.precio * item.cantidad).toFixed(2) }}</p>
-          </div>
-
-          <!-- Controles de cantidad -->
-          <div class="flex flex-col gap-2">
-            <div class="flex items-center gap-1.5">
-              <button
-                @click="emit('quitarProducto', item.producto.id)"
-                class="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500 text-white transition-all hover:bg-red-600 active:scale-90"
-              >
-                <Icon icon="mdi:minus" class="h-4 w-4" />
-              </button>
-              <span class="w-8 text-center text-sm font-bold text-gray-900">{{ item.cantidad }}</span>
-              <button
-                @click="emit('agregarProducto', item.producto)"
-                class="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500 text-white transition-all hover:bg-green-600 active:scale-90"
-              >
-                <Icon icon="mdi:plus" class="h-4 w-4" />
-              </button>
+          <!-- Fila principal del producto -->
+          <div class="flex items-center gap-3 p-3">
+            <!-- Info del producto -->
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-bold text-gray-900 truncate">{{ item.producto.nombre }}</p>
+              <p class="text-xs text-gray-500 mt-0.5">S/ {{ item.producto.precio.toFixed(2) }} c/u</p>
+              
+              <!-- Mostrar modificadores aplicados -->
+              <div v-if="item.modificadores && item.modificadores.length > 0" class="mt-1 flex flex-wrap gap-1">
+                <span
+                  v-for="mod in item.modificadores"
+                  :key="mod.modificador.id"
+                  class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  :class="mod.modificador.tipo === 'extra' ? 'bg-green-100 text-green-700' : mod.modificador.tipo === 'sin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'"
+                >
+                  <span>{{ mod.cantidad > 1 ? `${mod.cantidad}x ` : '' }}{{ mod.modificador.nombre }}</span>
+                  <span v-if="mod.modificador.precio_adicional > 0" class="text-green-600">+S/{{ (mod.modificador.precio_adicional * mod.cantidad).toFixed(2) }}</span>
+                </span>
+              </div>
+              
+              <p class="text-sm font-bold text-amber-700 mt-1">S/ {{ calcularSubtotalItem(item).toFixed(2) }}</p>
             </div>
-            <button
-              @click="emit('eliminarProducto', item.producto.id)"
-              class="flex items-center justify-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 active:scale-95"
-            >
-              <Icon icon="mdi:delete" class="h-3 w-3" />
-              Eliminar
-            </button>
+
+            <!-- Controles de cantidad -->
+            <div class="flex flex-col gap-2">
+              <div class="flex items-center gap-1.5">
+                <button
+                  @click="emit('quitarProducto', item.producto.id)"
+                  class="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500 text-white transition-all hover:bg-red-600 active:scale-90"
+                >
+                  <Icon icon="mdi:minus" class="h-4 w-4" />
+                </button>
+                <span class="w-8 text-center text-sm font-bold text-gray-900">{{ item.cantidad }}</span>
+                <button
+                  @click="emit('agregarProducto', item.producto)"
+                  class="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500 text-white transition-all hover:bg-green-600 active:scale-90"
+                >
+                  <Icon icon="mdi:plus" class="h-4 w-4" />
+                </button>
+              </div>
+              
+              <!-- Botones de acción -->
+              <div class="flex gap-1">
+                <button
+                  @click="toggleExpandirItem(item.producto.id)"
+                  :class="[
+                    'flex-1 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold transition-colors active:scale-95',
+                    itemExpandido === item.producto.id ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600 hover:bg-amber-50'
+                  ]"
+                >
+                  <Icon icon="mdi:tune-variant" class="h-3 w-3" />
+                  Extras
+                </button>
+                <button
+                  @click="emit('eliminarProducto', item.producto.id)"
+                  class="flex items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-red-600 transition-colors hover:bg-red-50 active:scale-95"
+                >
+                  <Icon icon="mdi:delete" class="h-3 w-3" />
+                </button>
+              </div>
+            </div>
           </div>
+          
+          <!-- Panel de modificadores (expandible) -->
+          <Transition name="expand">
+            <div v-if="itemExpandido === item.producto.id" class="border-t border-gray-200 bg-gray-50 p-3">
+              <p class="text-xs font-bold text-gray-600 mb-2">Personalizar pedido:</p>
+              
+              <!-- Extras con precio -->
+              <div v-if="modificadoresExtras.length > 0" class="mb-2">
+                <p class="text-[10px] font-semibold text-green-600 mb-1">➕ Extras</p>
+                <div class="flex flex-wrap gap-1">
+                  <button
+                    v-for="mod in modificadoresExtras"
+                    :key="mod.id"
+                    @click="agregarModificador(item, mod)"
+                    class="inline-flex items-center gap-1 rounded-full border border-green-300 bg-white px-2 py-1 text-[10px] font-semibold text-green-700 transition-all hover:bg-green-50 active:scale-95"
+                  >
+                    {{ mod.nombre }}
+                    <span v-if="mod.precio_adicional > 0" class="text-green-500">+S/{{ mod.precio_adicional.toFixed(2) }}</span>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Sin ingredientes -->
+              <div v-if="modificadoresSin.length > 0" class="mb-2">
+                <p class="text-[10px] font-semibold text-red-600 mb-1">➖ Sin</p>
+                <div class="flex flex-wrap gap-1">
+                  <button
+                    v-for="mod in modificadoresSin"
+                    :key="mod.id"
+                    @click="agregarModificador(item, mod)"
+                    class="inline-flex items-center rounded-full border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 transition-all hover:bg-red-50 active:scale-95"
+                  >
+                    {{ mod.nombre }}
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Sustituciones -->
+              <div v-if="modificadoresSustitucion.length > 0">
+                <p class="text-[10px] font-semibold text-blue-600 mb-1">🔄 Cambios</p>
+                <div class="flex flex-wrap gap-1">
+                  <button
+                    v-for="mod in modificadoresSustitucion"
+                    :key="mod.id"
+                    @click="agregarModificador(item, mod)"
+                    class="inline-flex items-center rounded-full border border-blue-300 bg-white px-2 py-1 text-[10px] font-semibold text-blue-700 transition-all hover:bg-blue-50 active:scale-95"
+                  >
+                    {{ mod.nombre }}
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Loading modificadores -->
+              <div v-if="loadingModificadores" class="text-center py-2">
+                <span class="text-xs text-gray-400">Cargando modificadores...</span>
+              </div>
+              
+              <!-- Modificadores aplicados con opción de quitar -->
+              <div v-if="item.modificadores && item.modificadores.length > 0" class="mt-3 pt-2 border-t border-gray-200">
+                <p class="text-[10px] font-semibold text-gray-500 mb-1">Aplicados:</p>
+                <div class="flex flex-wrap gap-1">
+                  <button
+                    v-for="mod in item.modificadores"
+                    :key="mod.modificador.id"
+                    @click="quitarModificador(item, mod.modificador.id)"
+                    class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold transition-all hover:opacity-70 active:scale-95"
+                    :class="mod.modificador.tipo === 'extra' ? 'bg-green-100 text-green-700' : mod.modificador.tipo === 'sin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'"
+                  >
+                    {{ mod.cantidad > 1 ? `${mod.cantidad}x ` : '' }}{{ mod.modificador.nombre }}
+                    <Icon icon="mdi:close" class="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </Transition>
         </div>
       </div>
 
@@ -330,5 +611,26 @@ const handleGuardarPedido = () => {
 .slide-enter-from,
 .slide-leave-to {
   transform: translateX(100%);
+}
+
+/* Animación del panel expandible */
+.expand-enter-active,
+.expand-leave-active {
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.expand-enter-to,
+.expand-leave-from {
+  opacity: 1;
+  max-height: 300px;
 }
 </style>

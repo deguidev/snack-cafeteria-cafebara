@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { Icon } from '@iconify/vue';
+import { supabase } from '../../lib/supabaseClient';
+import confetti from 'canvas-confetti';
 import PedidoCard from './PedidoCard.vue';
 import PedidoModal from './PedidoModal.vue';
 
@@ -9,26 +11,47 @@ interface Producto {
   nombre: string;
   descripcion: string;
   precio: number;
-  categoria: string;
+  categoria_id: string;
   imagen_url?: string;
   disponible: boolean;
 }
 
+interface Modificador {
+  id: string;
+  nombre: string;
+  tipo: string;
+  precio_adicional: number;
+}
+
+interface ItemModificador {
+  modificador_id: string;
+  nombre_modificador: string;
+  precio_adicional: number;
+  cantidad: number;
+}
+
 interface ItemPedido {
+  id: string;
   producto: Producto;
   cantidad: number;
+  precio_unitario: number;
+  subtotal: number;
+  modificadores?: ItemModificador[];
 }
 
 interface Pedido {
   id: string;
-  mesaNumero: number | null;
-  nombreCliente: string;
+  numero_pedido: number;
+  mesa_numero: number | null;
+  nombre_cliente: string | null;
+  telefono: string | null;
+  direccion: string | null;
   items: ItemPedido[];
   total: number;
-  fecha: string;
-  estado: 'pendiente' | 'en preparacion' | 'listo' | 'servido' | 'pagado' | 'entregado' | 'en camino';
+  created_at: string;
+  estado: 'pendiente' | 'en_preparacion' | 'listo' | 'servido' | 'pagado' | 'entregado' | 'en_camino' | 'cancelado';
   tipo_pedido: 'para_servir' | 'para_llevar' | 'delivery';
-  montoPagado?: number;
+  monto_pagado?: number;
 }
 
 // Estado
@@ -38,179 +61,58 @@ const pedidoSeleccionado = ref<Pedido | null>(null);
 const mostrarModal = ref(false);
 const montoRecibido = ref<number>(0);
 
-// Datos de ejemplo (reemplazar con datos de Supabase)
-const pedidosEjemplo: Pedido[] = [
-  {
-    id: '1',
-    mesaNumero: 1,
-    nombreCliente: 'Juan Pérez',
-    items: [
-      {
-        producto: {
-          id: '1',
-          nombre: 'Arroz con Pollo',
-          descripcion: 'Delicioso arroz con pollo a la olla',
-          precio: 15.00,
-          categoria: 'comidas',
-          disponible: true
-        },
-        cantidad: 2
-      },
-      {
-        producto: {
-          id: '5',
-          nombre: 'Chicha Morada',
-          descripcion: 'Refrescante chicha morada natural',
-          precio: 5.00,
-          categoria: 'bebidas',
-          disponible: true
-        },
-        cantidad: 2
-      }
-    ],
-    total: 40.00,
-    fecha: '2024-01-20 12:30',
-    estado: 'pendiente',
-    tipo_pedido: 'para_servir'
-  },
-  {
-    id: '2',
-    mesaNumero: null,
-    nombreCliente: 'María García',
-    items: [
-      {
-        producto: {
-          id: '9',
-          nombre: 'Café Americano',
-          descripcion: 'Café americano caliente',
-          precio: 4.50,
-          categoria: 'cafes',
-          disponible: true
-        },
-        cantidad: 1
-      }
-    ],
-    total: 4.50,
-    fecha: '2024-01-20 11:45',
-    estado: 'en preparacion',
-    tipo_pedido: 'para_llevar'
-  },
-  {
-    id: '3',
-    mesaNumero: null,
-    nombreCliente: 'Carlos López',
-    items: [
-      {
-        producto: {
-          id: '2',
-          nombre: 'Lomo Saltado',
-          descripcion: 'Carne de res salteada con cebolla',
-          precio: 18.00,
-          categoria: 'comidas',
-          disponible: true
-        },
-        cantidad: 1
-      },
-      {
-        producto: {
-          id: '10',
-          nombre: 'Cappuccino',
-          descripcion: 'Cappuccino cremoso con espuma',
-          precio: 6.00,
-          categoria: 'cafes',
-          disponible: true
-        },
-        cantidad: 1
-      }
-    ],
-    total: 24.00,
-    fecha: '2024-01-20 10:20',
-    estado: 'listo',
-    tipo_pedido: 'delivery'
-  },
-  {
-    id: '4',
-    mesaNumero: 2,
-    nombreCliente: 'Ana Martínez',
-    items: [
-      {
-        producto: {
-          id: '3',
-          nombre: 'Tallarines Verdes',
-          descripcion: 'Tallarines con salsa de albahaca',
-          precio: 16.00,
-          categoria: 'comidas',
-          disponible: true
-        },
-        cantidad: 1
-      }
-    ],
-    total: 16.00,
-    fecha: '2024-01-20 09:30',
-    estado: 'servido',
-    tipo_pedido: 'para_servir'
-  },
-  {
-    id: '5',
-    mesaNumero: null,
-    nombreCliente: 'Luis Rodríguez',
-    items: [
-      {
-        producto: {
-          id: '7',
-          nombre: 'Jugo de Naranja',
-          descripcion: 'Jugo natural de naranja',
-          precio: 8.00,
-          categoria: 'bebidas',
-          disponible: true
-        },
-        cantidad: 2
-      }
-    ],
-    total: 16.00,
-    fecha: '2024-01-20 09:00',
-    estado: 'pagado',
-    tipo_pedido: 'para_llevar',
-    montoPagado: 20.00
-  },
-  {
-    id: '6',
-    mesaNumero: null,
-    nombreCliente: 'Patricia Jiménez',
-    items: [
-      {
-        producto: {
-          id: '4',
-          nombre: 'Ceviche',
-          descripcion: 'Ceviche de pescado fresco',
-          precio: 20.00,
-          categoria: 'comidas',
-          disponible: true
-        },
-        cantidad: 1
-      }
-    ],
-    total: 20.00,
-    fecha: '2024-01-20 08:45',
-    estado: 'en camino',
-    tipo_pedido: 'delivery'
-  }
-];
-
-// Cargar pedidos
+// Cargar pedidos desde Supabase
 const cargarPedidos = async () => {
   try {
     loading.value = true;
-    // TODO: Descomentar cuando la tabla pedidos esté lista
-    // const { data, error } = await supabase
-    //   .from('pedidos')
-    //   .select('*')
-    //   .order('fecha', { ascending: false });
-    // if (error) throw error;
-    // pedidos.value = data;
     
-    // Por ahora usamos datos de ejemplo
-    pedidos.value = pedidosEjemplo;
+    // Cargar pedidos con sus detalles y productos
+    const { data: pedidosData, error: errorPedidos } = await supabase
+      .from('pedidos')
+      .select(`
+        *,
+        pedido_detalle (
+          id,
+          producto_id,
+          cantidad,
+          precio_unitario,
+          subtotal,
+          notas,
+          productos (
+            id,
+            nombre,
+            descripcion,
+            precio,
+            categoria_id,
+            imagen_url,
+            disponible
+          ),
+          pedido_detalle_modificadores (
+            id,
+            modificador_id,
+            nombre_modificador,
+            precio_adicional,
+            cantidad
+          )
+        )
+      `)
+      .order('created_at', { ascending: false });
+
+    if (errorPedidos) throw errorPedidos;
+
+    // Transformar datos al formato esperado
+    pedidos.value = (pedidosData || []).map(pedido => ({
+      ...pedido,
+      items: (pedido.pedido_detalle || []).map((detalle: any) => ({
+        id: detalle.id,
+        producto: detalle.productos,
+        cantidad: detalle.cantidad,
+        precio_unitario: detalle.precio_unitario,
+        subtotal: detalle.subtotal,
+        modificadores: detalle.pedido_detalle_modificadores || []
+      }))
+    }));
+
   } catch (err) {
     console.error('Error cargando pedidos:', err);
   } finally {
@@ -218,57 +120,56 @@ const cargarPedidos = async () => {
   }
 };
 
-// Agrupar pedidos por estado con metadata
+// Agrupar pedidos por estado con metadata (4 estados principales)
 const pedidosAgrupados = computed(() => {
   const estados = [
     { 
       id: 'pendiente', 
       title: 'Pendientes', 
-      icon: 'mdi:clock', 
+      icon: 'mdi:clock-outline', 
       color: 'text-yellow-600',
+      bgColor: 'bg-yellow-50',
       pedidos: pedidos.value.filter(p => p.estado === 'pendiente')
     },
     { 
-      id: 'en preparacion', 
+      id: 'en_preparacion', 
       title: 'En Preparación', 
       icon: 'mdi:chef-hat', 
       color: 'text-blue-600',
-      pedidos: pedidos.value.filter(p => p.estado === 'en preparacion')
+      bgColor: 'bg-blue-50',
+      pedidos: pedidos.value.filter(p => p.estado === 'en_preparacion')
     },
     { 
       id: 'listo', 
-      title: 'Listos para Entregar', 
+      title: 'Listos', 
       icon: 'mdi:check-circle', 
       color: 'text-green-600',
+      bgColor: 'bg-green-50',
       pedidos: pedidos.value.filter(p => p.estado === 'listo')
     },
     { 
-      id: 'servido', 
-      title: 'Servidos', 
-      icon: 'mdi:room-service', 
-      color: 'text-purple-600',
-      pedidos: pedidos.value.filter(p => p.estado === 'servido')
-    },
-    { 
-      id: 'en camino', 
-      title: 'En Camino', 
-      icon: 'mdi:truck-fast', 
-      color: 'text-orange-600',
-      pedidos: pedidos.value.filter(p => p.estado === 'en camino')
+      id: 'entregado', 
+      title: 'Entregados', 
+      icon: 'mdi:hand-okay', 
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50',
+      pedidos: pedidos.value.filter(p => p.estado === 'entregado')
     },
     { 
       id: 'pagado', 
       title: 'Pagados', 
       icon: 'mdi:cash-check', 
-      color: 'text-emerald-600',
+      color: 'text-teal-600',
+      bgColor: 'bg-teal-50',
       pedidos: pedidos.value.filter(p => p.estado === 'pagado')
     },
     { 
-      id: 'entregado', 
-      title: 'Entregados', 
-      icon: 'mdi:package-variant-closed', 
-      color: 'text-gray-600',
-      pedidos: pedidos.value.filter(p => p.estado === 'entregado')
+      id: 'cancelado', 
+      title: 'Cancelados', 
+      icon: 'mdi:close-circle', 
+      color: 'text-red-600',
+      bgColor: 'bg-red-50',
+      pedidos: pedidos.value.filter(p => p.estado === 'cancelado')
     }
   ];
   
@@ -290,11 +191,23 @@ const cerrarModal = () => {
 };
 
 // Cambiar estado del pedido
-const cambiarEstado = (pedidoId: string, nuevoEstado: Pedido['estado']) => {
-  const pedido = pedidos.value.find(p => p.id === pedidoId);
-  if (pedido) {
-    pedido.estado = nuevoEstado;
-    // TODO: Actualizar en Supabase
+const cambiarEstado = async (pedidoId: string, nuevoEstado: Pedido['estado']) => {
+  try {
+    const { error } = await supabase
+      .from('pedidos')
+      .update({ estado: nuevoEstado })
+      .eq('id', pedidoId);
+
+    if (error) throw error;
+
+    // Actualizar localmente
+    const pedido = pedidos.value.find(p => p.id === pedidoId);
+    if (pedido) {
+      pedido.estado = nuevoEstado;
+    }
+  } catch (err) {
+    console.error('Error actualizando estado:', err);
+    alert('Error al actualizar el estado del pedido');
   }
 };
 
@@ -302,11 +215,13 @@ const cambiarEstado = (pedidoId: string, nuevoEstado: Pedido['estado']) => {
 const getEstadoColor = (estado: Pedido['estado']) => {
   switch (estado) {
     case 'pendiente': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-    case 'en preparacion': return 'bg-blue-100 text-blue-800 border-blue-200';
+    case 'en_preparacion': return 'bg-blue-100 text-blue-800 border-blue-200';
     case 'listo': return 'bg-green-100 text-green-800 border-green-200';
     case 'servido': return 'bg-purple-100 text-purple-800 border-purple-200';
     case 'pagado': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
     case 'entregado': return 'bg-gray-100 text-gray-800 border-gray-200';
+    case 'en_camino': return 'bg-orange-100 text-orange-800 border-orange-200';
+    case 'cancelado': return 'bg-red-100 text-red-800 border-red-200';
     default: return 'bg-gray-100 text-gray-800';
   }
 };
@@ -317,37 +232,93 @@ const vuelto = computed(() => {
   return montoRecibido.value - pedidoSeleccionado.value.total;
 });
 
-// Procesar pago
-const procesarPago = () => {
-  if (!pedidoSeleccionado.value || montoRecibido.value < pedidoSeleccionado.value.total) {
-    return;
+// Procesar pago (simplificado - solo marca como pagado)
+const procesarPago = async () => {
+  if (!pedidoSeleccionado.value) return;
+  
+  try {
+    // Actualizar estado a pagado en Supabase
+    const { error } = await supabase
+      .from('pedidos')
+      .update({ 
+        estado: 'pagado',
+        monto_pagado: pedidoSeleccionado.value.total
+      })
+      .eq('id', pedidoSeleccionado.value.id);
+
+    if (error) throw error;
+
+    // Actualizar localmente
+    const pedido = pedidos.value.find(p => p.id === pedidoSeleccionado.value?.id);
+    if (pedido) {
+      pedido.estado = 'pagado';
+      pedido.monto_pagado = pedido.total;
+    }
+    
+    // 🎉 Confetti al pagar
+    confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+    setTimeout(() => {
+      confetti({ particleCount: 50, angle: 60, spread: 55, origin: { x: 0 } });
+      confetti({ particleCount: 50, angle: 120, spread: 55, origin: { x: 1 } });
+    }, 250);
+    
+    // Cerrar modal después de un breve delay
+    setTimeout(() => {
+      cerrarModal();
+    }, 1500);
+  } catch (err) {
+    console.error('Error procesando pago:', err);
+    alert('Error al procesar el pago');
   }
-  
-  cambiarEstado(pedidoSeleccionado.value.id, 'pagado');
-  
-  // Actualizar monto pagado
-  const pedido = pedidos.value.find(p => p.id === pedidoSeleccionado.value?.id);
-  if (pedido) {
-    pedido.montoPagado = montoRecibido.value;
-  }
-  
-  // Resetear monto recibido
-  montoRecibido.value = 0;
-  
-  // Cerrar modal después de un breve delay para mostrar confirmación
-  setTimeout(() => {
+};
+
+// Eliminar pedido completo (pedido, detalles y modificadores)
+const eliminarPedido = async (pedidoId: string) => {
+  try {
+    // La eliminación en cascada se encarga de pedido_detalle y pedido_detalle_modificadores
+    // gracias a ON DELETE CASCADE en las foreign keys
+    const { error } = await supabase
+      .from('pedidos')
+      .delete()
+      .eq('id', pedidoId);
+
+    if (error) throw error;
+
+    // Eliminar localmente
+    pedidos.value = pedidos.value.filter(p => p.id !== pedidoId);
+    
+    // Cerrar modal
     cerrarModal();
-  }, 1000);
+    
+    console.log('Pedido eliminado exitosamente');
+  } catch (err) {
+    console.error('Error eliminando pedido:', err);
+    alert('Error al eliminar el pedido');
+  }
+};
+
+// Formatear fecha
+const formatearFecha = (fecha: string) => {
+  const date = new Date(fecha);
+  return date.toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 };
 
 // Cargar pedidos al montar
-cargarPedidos();
+onMounted(() => {
+  cargarPedidos();
+});
 </script>
 
 <template>
-  <div class="min-h-screen bg-linear-to-br from-amber-50 via-orange-50 to-yellow-50">
+  <div class="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50">
     <!-- Header -->
-    <header class="bg-linear-to-r from-amber-900 via-amber-800 to-yellow-800 px-3 py-3 sm:px-4 sm:py-6 shadow-lg sticky top-0 z-10">
+    <header class="bg-gradient-to-r from-amber-900 via-amber-800 to-yellow-800 px-3 py-3 sm:px-4 sm:py-6 shadow-lg sticky top-0 z-10">
       <div class="mx-auto max-w-7xl">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2 sm:gap-4">
@@ -356,12 +327,12 @@ cargarPedidos();
             </a>
             <div>
               <h1 class="text-xl font-bold text-white sm:text-2xl lg:text-3xl">Lista de Pedidos</h1>
-              <p class="mt-1 text-xs text-amber-100 sm:text-sm hidden sm:block">Gestiona los pedidos de la cafetería</p>
+              <p class="mt-1 text-xs text-amber-100 sm:text-sm  sm:block">Gestiona los pedidos de la cafetería</p>
             </div>
           </div>
           
           <div class="flex items-center gap-2">
-            <span class="hidden xs:inline text-xs text-amber-100 sm:text-sm">
+            <span class=" xs:inline text-xs text-amber-100 sm:text-sm">
               Total: {{ pedidos.length }} pedido{{ pedidos.length !== 1 ? 's' : '' }}
             </span>
           </div>
@@ -413,9 +384,12 @@ cargarPedidos();
     <PedidoModal
       :pedidoSeleccionado="pedidoSeleccionado"
       :mostrarModal="mostrarModal"
+      :montoRecibido="montoRecibido"
       @cerrarModal="cerrarModal"
       @cambiarEstado="cambiarEstado"
       @procesarPago="procesarPago"
+      @eliminarPedido="eliminarPedido"
+      @update:montoRecibido="montoRecibido = $event"
     />
   </div>
 </template>

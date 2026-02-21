@@ -1,90 +1,102 @@
 ﻿<script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { Icon } from '@iconify/vue';
 import confetti from 'canvas-confetti';
+import { supabase } from '../../lib/supabaseClient';
 
 interface Mesa {
   id: string;
   numero: number;
   capacidad: number;
-  posicion_x: number; // Posición en la grilla (columna)
-  posicion_y: number; // Posición en la grilla (fila)
-  ancho: number; // Ancho en celdas de grilla
-  alto: number; // Alto en celdas de grilla
+  posicion_x: number;
+  posicion_y: number;
+  ancho: number;
+  alto: number;
   orientacion: 'horizontal' | 'vertical';
-  estado: 'disponible' | 'ocupada';
-  pedidos?: Pedido[];
-  tiempo_ocupado?: Date;
+  estado: 'disponible' | 'ocupada' | 'reservada' | 'mantenimiento';
+  ubicacion: string;
+  activo: boolean;
+  pedidos?: PedidoMesa[];
+  tiempo_ocupado?: string;
 }
 
-interface Pedido {
+interface PedidoMesa {
   id: string;
-  producto: string;
-  cantidad: number;
-  precio: number;
+  numero_pedido: number;
+  total: number;
+  estado: string;
+  items: {
+    nombre_producto: string;
+    cantidad: number;
+    precio_unitario: number;
+  }[];
 }
 
 // Configuración de la grilla
-const GRID_COLS = 8; // 8 columnas
-const GRID_ROWS = 6; // 6 filas
+const GRID_COLS = 8;
+const GRID_ROWS = 6;
 
-// Mesas con posiciones específicas en la grilla
-const mesas = ref<Mesa[]>([
-  { 
-    id: '1', 
-    numero: 1, 
-    capacidad: 4, 
-    posicion_x: 1, // Columna 1
-    posicion_y: 1, // Fila 1
-    ancho: 2, // Ocupa 2 columnas
-    alto: 2, // Ocupa 2 filas
-    orientacion: 'vertical', 
-    estado: 'disponible' 
-  },
-  { 
-    id: '2', 
-    numero: 2, 
-    capacidad: 4, 
-    posicion_x: 4, // Columna 4
-    posicion_y: 1, // Fila 1
-    ancho: 2,
-    alto: 2,
-    orientacion: 'horizontal', 
-    estado: 'ocupada',
-    pedidos: [
-      { id: 'p1', producto: 'Arroz con pollo', cantidad: 2, precio: 15.00 },
-      { id: 'p2', producto: 'Café', cantidad: 2, precio: 5.00 },
-    ],
-    tiempo_ocupado: new Date()
-  },
-  { 
-    id: '3', 
-    numero: 3, 
-    capacidad: 3, 
-    posicion_x: 1, // Columna 1
-    posicion_y: 4, // Fila 4
-    ancho: 2,
-    alto: 2,
-    orientacion: 'vertical', 
-    estado: 'disponible' 
-  },
-  { 
-    id: '4', 
-    numero: 4, 
-    capacidad: 5, 
-    posicion_x: 4, // Columna 4
-    posicion_y: 4, // Fila 4
-    ancho: 2,
-    alto: 2,
-    orientacion: 'vertical', 
-    estado: 'ocupada',
-    pedidos: [
-      { id: 'p3', producto: 'Lomo saltado', cantidad: 1, precio: 18.00 },
-      { id: 'p4', producto: 'Jugo de naranja', cantidad: 1, precio: 6.00 },
-    ],
-    tiempo_ocupado: new Date()
-  },
-]);
+// Mesas desde Supabase
+const mesas = ref<Mesa[]>([]);
+const loading = ref(true);
+
+// Cargar mesas desde Supabase
+const cargarMesas = async () => {
+  try {
+    loading.value = true;
+    
+    // Cargar mesas
+    const { data: mesasData, error: errorMesas } = await supabase
+      .from('mesas')
+      .select('*')
+      .eq('activo', true)
+      .order('numero');
+
+    if (errorMesas) throw errorMesas;
+
+    // Cargar pedidos activos (no pagados ni cancelados) por mesa
+    const { data: pedidosData, error: errorPedidos } = await supabase
+      .from('pedidos')
+      .select(`
+        id,
+        numero_pedido,
+        mesa_numero,
+        total,
+        estado,
+        pedido_detalle (
+          nombre_producto,
+          cantidad,
+          precio_unitario
+        )
+      `)
+      .eq('tipo_pedido', 'para_servir')
+      .not('estado', 'in', '("pagado","cancelado")');
+
+    if (errorPedidos) throw errorPedidos;
+
+    // Mapear mesas con sus pedidos
+    mesas.value = (mesasData || []).map(mesa => {
+      const pedidosMesa = (pedidosData || []).filter(p => p.mesa_numero === mesa.numero);
+      const tienePedidos = pedidosMesa.length > 0;
+      
+      return {
+        ...mesa,
+        estado: tienePedidos ? 'ocupada' : mesa.estado,
+        pedidos: pedidosMesa.map(p => ({
+          id: p.id,
+          numero_pedido: p.numero_pedido,
+          total: p.total,
+          estado: p.estado,
+          items: p.pedido_detalle || []
+        }))
+      };
+    });
+  } catch (err) {
+    console.error('Error cargando mesas:', err);
+  } finally {
+    loading.value = false;
+  }
+};
 
 const mesaSeleccionada = ref<Mesa | null>(null);
 const mostrarModal = ref(false);
@@ -96,11 +108,18 @@ const estadisticas = computed(() => ({
 }));
 
 const totalPedido = computed(() => {
-  if (!mesaSeleccionada.value?.pedidos) return 0;
-  return mesaSeleccionada.value.pedidos.reduce((sum, p) => sum + (p.precio * p.cantidad), 0);
+  if (!mesaSeleccionada.value?.pedidos || mesaSeleccionada.value.pedidos.length === 0) return 0;
+  return mesaSeleccionada.value.pedidos.reduce((sum, p) => sum + p.total, 0);
 });
 
 const seleccionarMesa = (mesa: Mesa) => {
+  // Si la mesa está disponible, redirigir a AnotarPedido con el número de mesa
+  if (mesa.estado === 'disponible') {
+    window.location.href = `/anotar-pedido?mesa=${mesa.numero}`;
+    return;
+  }
+  
+  // Si tiene pedidos, mostrar el modal con los detalles
   mesaSeleccionada.value = mesa;
   mostrarModal.value = true;
 };
@@ -140,13 +159,15 @@ const pagarMesa = () => {
 };
 
 const getTotalMesa = (mesa: Mesa) => {
-  if (!mesa.pedidos) return 0;
-  return mesa.pedidos.reduce((sum, p) => sum + (p.precio * p.cantidad), 0);
+  if (!mesa.pedidos || mesa.pedidos.length === 0) return 0;
+  return mesa.pedidos.reduce((sum, p) => sum + p.total, 0);
 };
 
 const getCantidadPedidos = (mesa: Mesa) => {
-  if (!mesa.pedidos) return 0;
-  return mesa.pedidos.reduce((sum, p) => sum + p.cantidad, 0);
+  if (!mesa.pedidos || mesa.pedidos.length === 0) return 0;
+  return mesa.pedidos.reduce((sum, p) => {
+    return sum + p.items.reduce((itemSum, item) => itemSum + item.cantidad, 0);
+  }, 0);
 };
 
 // Función para obtener el estilo de posición de cada mesa en la grilla
@@ -158,6 +179,11 @@ const getMesaGridStyle = (mesa: Mesa) => {
     gridRowEnd: mesa.posicion_y + mesa.alto,
   };
 };
+
+// Cargar mesas al montar
+onMounted(() => {
+  cargarMesas();
+});
 </script>
 
 <template>

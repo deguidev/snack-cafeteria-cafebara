@@ -20,12 +20,25 @@ interface User {
   role: 'super_admin' | 'admin' | 'user';
 }
 
+interface EstadisticasDia {
+  ventasHoy: number;
+  pedidosHoy: number;
+  productosVendidos: number;
+}
+
 const restaurantes = ref<Restaurante[]>([]);
 const restaurante = ref<Restaurante | null>(null);
 const loading = ref(true);
 const user = ref<User | null>(null);
 const selectedRestaurantId = ref<string>('');
 const showRestaurantModal = ref(false);
+
+// Estadísticas del día
+const estadisticas = ref<EstadisticasDia>({
+  ventasHoy: 0,
+  pedidosHoy: 0,
+  productosVendidos: 0
+});
 
 // Simular autenticación - en producción usar auth real de Supabase
 const currentUser = ref<User>({
@@ -72,6 +85,50 @@ const selectRestaurant = (restaurantId: string) => {
   }
 };
 
+// Cargar estadísticas del día desde Supabase
+const fetchEstadisticas = async () => {
+  try {
+    // Obtener fecha de hoy (inicio y fin del día)
+    const hoy = new Date();
+    const inicioHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString();
+    const finHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + 1).toISOString();
+
+    // Obtener pedidos pagados de hoy
+    const { data: pedidosHoy, error: errorPedidos } = await supabase
+      .from('pedidos')
+      .select(`
+        id,
+        total,
+        estado,
+        created_at,
+        pedido_detalle (
+          cantidad
+        )
+      `)
+      .gte('created_at', inicioHoy)
+      .lt('created_at', finHoy);
+
+    if (errorPedidos) throw errorPedidos;
+
+    // Calcular estadísticas
+    const pedidosPagados = (pedidosHoy || []).filter(p => p.estado === 'pagado');
+    const ventasHoy = pedidosPagados.reduce((sum, p) => sum + (p.total || 0), 0);
+    const pedidosCount = (pedidosHoy || []).length;
+    const productosVendidos = pedidosPagados.reduce((sum, p) => {
+      const detalles = p.pedido_detalle || [];
+      return sum + detalles.reduce((dSum: number, d: any) => dSum + (d.cantidad || 0), 0);
+    }, 0);
+
+    estadisticas.value = {
+      ventasHoy,
+      pedidosHoy: pedidosCount,
+      productosVendidos
+    };
+  } catch (err) {
+    console.error('Error cargando estadísticas:', err);
+  }
+};
+
 onMounted(() => {
   // Recuperar selección previa
   const savedRestaurantId = localStorage.getItem('selectedRestaurantId');
@@ -80,6 +137,7 @@ onMounted(() => {
   }
   
   fetchRestaurantes();
+  fetchEstadisticas();
 });
 </script>
 
@@ -201,22 +259,22 @@ onMounted(() => {
         </button>
 
         <!-- Reportes -->
-        <button class="action-card action-card-stone">
+        <a href="/reportes" class="action-card action-card-stone">
           <div class="action-icon-wrapper action-icon-stone">
             <Icon icon="mdi:chart-bar" class="action-icon" />
           </div>
           <span class="action-title">Reportes</span>
           <span class="action-subtitle">Ver estadísticas</span>
-        </button>
+        </a>
 
         <!-- Configuración (solo para admin) -->
-        <button v-if="isSuperAdmin" class="action-card action-card-purple">
+        <a v-if="isSuperAdmin" href="/configuracion" class="action-card action-card-purple">
           <div class="action-icon-wrapper action-icon-purple">
             <Icon icon="mdi:cog" class="action-icon" />
           </div>
           <span class="action-title">Configuración</span>
           <span class="action-subtitle">Ajustes del sistema</span>
-        </button>
+        </a>
       </div>
     </section>
 
@@ -255,7 +313,7 @@ onMounted(() => {
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm font-medium text-amber-800">Ventas hoy</p>
-                <p class="mt-2 text-3xl font-bold text-amber-900">S/ 0.00</p>
+                <p class="mt-2 text-3xl font-bold text-amber-900">S/ {{ estadisticas.ventasHoy.toFixed(2) }}</p>
               </div>
               <div class="flex h-12 w-12 items-center justify-center rounded-full bg-amber-200">
                 <Icon icon="mdi:cash-multiple" class="h-6 w-6 text-amber-800" />
@@ -267,7 +325,7 @@ onMounted(() => {
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm font-medium text-yellow-800">Pedidos</p>
-                <p class="mt-2 text-3xl font-bold text-yellow-900">0</p>
+                <p class="mt-2 text-3xl font-bold text-yellow-900">{{ estadisticas.pedidosHoy }}</p>
               </div>
               <div class="flex h-12 w-12 items-center justify-center rounded-full bg-yellow-200">
                 <Icon icon="mdi:shopping" class="h-6 w-6 text-yellow-800" />
@@ -278,8 +336,8 @@ onMounted(() => {
           <div class="rounded-xl bg-linear-to-br from-orange-50 to-orange-100 p-6">
             <div class="flex items-center justify-between">
               <div>
-                <p class="text-sm font-medium text-orange-800">Productos</p>
-                <p class="mt-2 text-3xl font-bold text-orange-900">0</p>
+                <p class="text-sm font-medium text-orange-800">Productos vendidos</p>
+                <p class="mt-2 text-3xl font-bold text-orange-900">{{ estadisticas.productosVendidos }}</p>
               </div>
               <div class="flex h-12 w-12 items-center justify-center rounded-full bg-orange-200">
                 <Icon icon="mdi:package-variant" class="h-6 w-6 text-orange-800" />
