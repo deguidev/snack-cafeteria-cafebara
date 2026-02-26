@@ -19,6 +19,7 @@ import ChartDataLabels from 'chartjs-plugin-datalabels';
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Title, Tooltip, Legend, ChartDataLabels);
 
 // Colores para las barras del gráfico
+//Diego Lipa
 const coloresBarras = [
   '#059669', '#0891b2', '#7c3aed', '#db2777', '#ea580c',
   '#16a34a', '#2563eb', '#9333ea', '#e11d48', '#d97706',
