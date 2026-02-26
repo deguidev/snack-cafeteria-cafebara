@@ -2,6 +2,8 @@
 import { ref, computed, onMounted } from 'vue';
 import { Icon } from '@iconify/vue';
 import { supabase } from '../../lib/supabaseClient';
+import ModificadoresModal from './ModificadoresModal.vue';
+import MesaSelectorModal from '../mesas/MesaSelectorModal.vue';
 
 interface Producto {
   id: string;
@@ -46,11 +48,49 @@ interface ItemPedido {
 
 // Estado local
 const mostrarCliente = ref(false);
-const itemExpandido = ref<string | null>(null);
 const modificadoresDisponibles = ref<Modificador[]>([]);
 const mesasDisponibles = ref<Mesa[]>([]);
 const loadingModificadores = ref(true);
 const loadingMesas = ref(true);
+
+// Estado para el modal de modificadores
+const mostrarModalModificadores = ref(false);
+const itemParaModificar = ref<ItemPedido | null>(null);
+
+// Estado para el modal de selección de mesas
+const mostrarModalMesas = ref(false);
+
+// Abrir modal de modificadores
+const abrirModalModificadores = (item: ItemPedido) => {
+  itemParaModificar.value = item;
+  mostrarModalModificadores.value = true;
+};
+
+// Guardar modificadores desde el modal
+const guardarModificadoresModal = (modificadores: ItemModificador[], cantidadAplicar: number) => {
+  if (!itemParaModificar.value) return;
+  
+  const item = itemParaModificar.value;
+  
+  if (cantidadAplicar >= item.cantidad) {
+    // Aplicar a todos los items
+    item.modificadores = modificadores;
+  } else {
+    // Separar la cantidad seleccionada con modificadores diferentes
+    // 1. Reducir cantidad del item original
+    item.cantidad -= cantidadAplicar;
+    
+    // 2. Crear nuevo item con la cantidad seleccionada y los modificadores
+    const nuevoItem: ItemPedido = {
+      producto: { ...item.producto },
+      cantidad: cantidadAplicar,
+      modificadores: modificadores
+    };
+    
+    // 3. Emitir evento para agregar el nuevo item al pedido
+    emit('agregarItemConModificadores', nuevoItem);
+  }
+};
 
 // Cargar modificadores desde Supabase
 const cargarModificadores = async () => {
@@ -91,17 +131,6 @@ const cargarMesas = async () => {
   }
 };
 
-// Filtrar modificadores por tipo
-const modificadoresExtras = computed(() => 
-  modificadoresDisponibles.value.filter(m => m.tipo === 'extra')
-);
-const modificadoresSin = computed(() => 
-  modificadoresDisponibles.value.filter(m => m.tipo === 'sin')
-);
-const modificadoresSustitucion = computed(() => 
-  modificadoresDisponibles.value.filter(m => m.tipo === 'sustitucion')
-);
-
 // Mesas disponibles para selección (no ocupadas)
 const mesasParaSeleccion = computed(() => 
   mesasDisponibles.value.filter(m => m.estado === 'disponible' || m.estado === 'reservada')
@@ -135,6 +164,7 @@ const emit = defineEmits<{
   'agregarProducto': [producto: Producto];
   'quitarProducto': [productoId: string];
   'eliminarProducto': [productoId: string];
+  'agregarItemConModificadores': [item: ItemPedido];
   'guardarPedido': [];
   'limpiarPedido': [];
   'redirectToPedidos': [];
@@ -160,11 +190,6 @@ const calcularSubtotalItem = (item: ItemPedido) => {
   return precioBase + precioModificadores;
 };
 
-// Toggle expandir item para modificadores
-const toggleExpandirItem = (itemId: string) => {
-  itemExpandido.value = itemExpandido.value === itemId ? null : itemId;
-};
-
 const cantidadTotal = computed(() => {
   return props.pedidoActual.reduce((sum, item) => sum + item.cantidad, 0);
 });
@@ -175,31 +200,6 @@ const handleGuardarPedido = () => {
   // La redirección se maneja en AnotarPedido.vue después de guardar exitosamente
 };
 
-// Agregar modificador a un item
-const agregarModificador = (item: ItemPedido, modificador: Modificador) => {
-  if (!item.modificadores) {
-    item.modificadores = [];
-  }
-  const existente = item.modificadores.find(m => m.modificador.id === modificador.id);
-  if (existente) {
-    existente.cantidad++;
-  } else {
-    item.modificadores.push({ modificador, cantidad: 1 });
-  }
-};
-
-// Quitar modificador de un item
-const quitarModificador = (item: ItemPedido, modificadorId: string) => {
-  if (!item.modificadores) return;
-  const index = item.modificadores.findIndex(m => m.modificador.id === modificadorId);
-  if (index !== -1) {
-    if (item.modificadores[index].cantidad > 1) {
-      item.modificadores[index].cantidad--;
-    } else {
-      item.modificadores.splice(index, 1);
-    }
-  }
-};
 </script>
 
 <template>
@@ -293,26 +293,29 @@ const quitarModificador = (item: ItemPedido, modificadorId: string) => {
         <!-- Mesa (solo para "Para Servir") -->
         <div v-if="tipoPedido === 'para_servir'">
           <div class="flex items-center gap-3">
-            <!-- Select de Mesa -->
+            <!-- Botón para seleccionar mesa -->
             <div class="flex-1">
               <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-gray-700">
                 <Icon icon="mdi:table-furniture" class="h-4 w-4 text-amber-600" />
                 Mesa # <span class="text-red-500">*</span>
               </label>
-              <select
-                :value="mesaNumero"
-                @change="emit('update:mesaNumero', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
-                class="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-sm font-semibold focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+              <button
+                @click="mostrarModalMesas = true"
+                class="w-full rounded-lg border-2 px-3 py-2.5 text-sm font-semibold text-left flex items-center justify-between transition-colors"
+                :class="mesaNumero 
+                  ? 'border-amber-500 bg-amber-50 text-amber-800' 
+                  : 'border-gray-300 bg-white text-gray-500 hover:border-amber-400'"
               >
-                <option :value="null">Selecciona mesa</option>
-                <option 
-                  v-for="mesa in mesasParaSeleccion" 
-                  :key="mesa.id" 
-                  :value="mesa.numero"
-                >
-                  Mesa {{ mesa.numero }} ({{ mesa.capacidad }} pers.) - {{ mesa.ubicacion }}
-                </option>
-              </select>
+                <span class="flex items-center gap-2">
+                  <Icon 
+                    :icon="mesaNumero ? 'mdi:check-circle' : 'mdi:table-furniture'" 
+                    :class="mesaNumero ? 'text-amber-600' : 'text-gray-400'"
+                    class="h-5 w-5" 
+                  />
+                  {{ mesaNumero ? `Mesa ${mesaNumero}` : 'Seleccionar mesa...' }}
+                </span>
+                <Icon icon="mdi:chevron-right" class="h-5 w-5 text-gray-400" />
+              </button>
             </div>
             
             <!-- Switch para agregar cliente -->
@@ -432,120 +435,42 @@ const quitarModificador = (item: ItemPedido, modificadorId: string) => {
               <p class="text-sm font-bold text-amber-700 mt-1">S/ {{ calcularSubtotalItem(item).toFixed(2) }}</p>
             </div>
 
-            <!-- Controles de cantidad -->
-            <div class="flex flex-col gap-2">
-              <div class="flex items-center gap-1.5">
+            <!-- Controles: cantidad + botones de acción -->
+            <div class="flex items-center gap-2">
+              <!-- Controles de cantidad -->
+              <div class="flex items-center gap-1">
                 <button
                   @click="emit('quitarProducto', item.producto.id)"
-                  class="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500 text-white transition-all hover:bg-red-600 active:scale-90"
+                  class="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-200 text-gray-700 transition-all hover:bg-red-100 hover:text-red-600 active:scale-90"
                 >
-                  <Icon icon="mdi:minus" class="h-4 w-4" />
+                  <Icon icon="mdi:minus" class="h-5 w-5" />
                 </button>
-                <span class="w-8 text-center text-sm font-bold text-gray-900">{{ item.cantidad }}</span>
+                <span class="w-8 text-center text-base font-bold text-gray-900">{{ item.cantidad }}</span>
                 <button
                   @click="emit('agregarProducto', item.producto)"
-                  class="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500 text-white transition-all hover:bg-green-600 active:scale-90"
+                  class="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-200 text-gray-700 transition-all hover:bg-green-100 hover:text-green-600 active:scale-90"
                 >
-                  <Icon icon="mdi:plus" class="h-4 w-4" />
+                  <Icon icon="mdi:plus" class="h-5 w-5" />
                 </button>
               </div>
               
-              <!-- Botones de acción -->
-              <div class="flex gap-1">
-                <button
-                  @click="toggleExpandirItem(item.producto.id)"
-                  :class="[
-                    'flex-1 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold transition-colors active:scale-95',
-                    itemExpandido === item.producto.id ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600 hover:bg-amber-50'
-                  ]"
-                >
-                  <Icon icon="mdi:tune-variant" class="h-3 w-3" />
-                  Extras
-                </button>
-                <button
-                  @click="emit('eliminarProducto', item.producto.id)"
-                  class="flex items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-red-600 transition-colors hover:bg-red-50 active:scale-95"
-                >
-                  <Icon icon="mdi:delete" class="h-3 w-3" />
-                </button>
-              </div>
+              <!-- Botón Extras (abre modal) -->
+              <button
+                @click="abrirModalModificadores(item)"
+                class="flex h-9 items-center gap-1.5 rounded-lg bg-amber-100 px-3 text-amber-700 font-semibold text-xs transition-all hover:bg-amber-200 active:scale-95"
+              >
+                <Icon icon="mdi:tune-variant" class="h-4 w-4" />
+              </button>
+              
+              <!-- Botón Eliminar -->
+              <button
+                @click="emit('eliminarProducto', item.producto.id)"
+                class="flex h-9 w-9 items-center justify-center rounded-lg bg-red-100 text-red-600 transition-all hover:bg-red-200 active:scale-95"
+              >
+                <Icon icon="mdi:delete" class="h-5 w-5" />
+              </button>
             </div>
           </div>
-          
-          <!-- Panel de modificadores (expandible) -->
-          <Transition name="expand">
-            <div v-if="itemExpandido === item.producto.id" class="border-t border-gray-200 bg-gray-50 p-3">
-              <p class="text-xs font-bold text-gray-600 mb-2">Personalizar pedido:</p>
-              
-              <!-- Extras con precio -->
-              <div v-if="modificadoresExtras.length > 0" class="mb-2">
-                <p class="text-[10px] font-semibold text-green-600 mb-1">➕ Extras</p>
-                <div class="flex flex-wrap gap-1">
-                  <button
-                    v-for="mod in modificadoresExtras"
-                    :key="mod.id"
-                    @click="agregarModificador(item, mod)"
-                    class="inline-flex items-center gap-1 rounded-full border border-green-300 bg-white px-2 py-1 text-[10px] font-semibold text-green-700 transition-all hover:bg-green-50 active:scale-95"
-                  >
-                    {{ mod.nombre }}
-                    <span v-if="mod.precio_adicional > 0" class="text-green-500">+S/{{ mod.precio_adicional.toFixed(2) }}</span>
-                  </button>
-                </div>
-              </div>
-              
-              <!-- Sin ingredientes -->
-              <div v-if="modificadoresSin.length > 0" class="mb-2">
-                <p class="text-[10px] font-semibold text-red-600 mb-1">➖ Sin</p>
-                <div class="flex flex-wrap gap-1">
-                  <button
-                    v-for="mod in modificadoresSin"
-                    :key="mod.id"
-                    @click="agregarModificador(item, mod)"
-                    class="inline-flex items-center rounded-full border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 transition-all hover:bg-red-50 active:scale-95"
-                  >
-                    {{ mod.nombre }}
-                  </button>
-                </div>
-              </div>
-              
-              <!-- Sustituciones -->
-              <div v-if="modificadoresSustitucion.length > 0">
-                <p class="text-[10px] font-semibold text-blue-600 mb-1">🔄 Cambios</p>
-                <div class="flex flex-wrap gap-1">
-                  <button
-                    v-for="mod in modificadoresSustitucion"
-                    :key="mod.id"
-                    @click="agregarModificador(item, mod)"
-                    class="inline-flex items-center rounded-full border border-blue-300 bg-white px-2 py-1 text-[10px] font-semibold text-blue-700 transition-all hover:bg-blue-50 active:scale-95"
-                  >
-                    {{ mod.nombre }}
-                  </button>
-                </div>
-              </div>
-              
-              <!-- Loading modificadores -->
-              <div v-if="loadingModificadores" class="text-center py-2">
-                <span class="text-xs text-gray-400">Cargando modificadores...</span>
-              </div>
-              
-              <!-- Modificadores aplicados con opción de quitar -->
-              <div v-if="item.modificadores && item.modificadores.length > 0" class="mt-3 pt-2 border-t border-gray-200">
-                <p class="text-[10px] font-semibold text-gray-500 mb-1">Aplicados:</p>
-                <div class="flex flex-wrap gap-1">
-                  <button
-                    v-for="mod in item.modificadores"
-                    :key="mod.modificador.id"
-                    @click="quitarModificador(item, mod.modificador.id)"
-                    class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold transition-all hover:opacity-70 active:scale-95"
-                    :class="mod.modificador.tipo === 'extra' ? 'bg-green-100 text-green-700' : mod.modificador.tipo === 'sin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'"
-                  >
-                    {{ mod.cantidad > 1 ? `${mod.cantidad}x ` : '' }}{{ mod.modificador.nombre }}
-                    <Icon icon="mdi:close" class="h-3 w-3" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Transition>
         </div>
       </div>
 
@@ -588,6 +513,23 @@ const quitarModificador = (item: ItemPedido, modificadorId: string) => {
       </div>
     </div>
   </Transition>
+
+  <!-- Modal de Modificadores -->
+  <ModificadoresModal
+    :mostrar="mostrarModalModificadores"
+    :item="itemParaModificar"
+    :modificadoresDisponibles="modificadoresDisponibles"
+    @cerrar="mostrarModalModificadores = false"
+    @guardar="guardarModificadoresModal"
+  />
+
+  <!-- Modal de Selección de Mesas -->
+  <MesaSelectorModal
+    :visible="mostrarModalMesas"
+    :mesa-seleccionada="mesaNumero"
+    @cerrar="mostrarModalMesas = false"
+    @seleccionar="(num) => { emit('update:mesaNumero', num); mostrarModalMesas = false; }"
+  />
 </template>
 
 <style scoped>

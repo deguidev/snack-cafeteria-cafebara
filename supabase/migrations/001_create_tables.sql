@@ -122,7 +122,7 @@ INSERT INTO mesas (numero, capacidad, posicion_x, posicion_y, ancho, alto, orien
 -- =============================================
 CREATE TABLE pedidos (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    numero_pedido SERIAL, -- Número correlativo del día
+    numero_pedido INT NOT NULL DEFAULT 1, -- Número correlativo (se cambiará con ALTER TABLE abajo)
     tipo_pedido VARCHAR(20) NOT NULL CHECK (tipo_pedido IN ('para_servir', 'para_llevar', 'delivery')),
     estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'en_preparacion', 'listo', 'entregado', 'pagado', 'cancelado')),
     
@@ -281,6 +281,8 @@ CREATE TABLE pedido_detalle_modificadores (
     
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE pedido_detalle_modificadores ADD COLUMN tipo VARCHAR(20);
+
 
 CREATE INDEX idx_pedido_detalle_mod_detalle ON pedido_detalle_modificadores(pedido_detalle_id);
 
@@ -709,6 +711,52 @@ CREATE POLICY "Solo admins pueden gestionar usuarios" ON usuarios
             AND usuarios.rol IN ('super_admin', 'admin')
         )
     );
+
+-- =============================================
+-- ALTER TABLE: Cambiar numero_pedido de SERIAL a INT
+-- Para que el trigger pueda asignar el número diario
+-- =============================================
+--ALTER TABLE pedidos ALTER COLUMN numero_pedido DROP DEFAULT;
+--ALTER TABLE pedidos ALTER COLUMN numero_pedido SET DATA TYPE INT;
+--ALTER TABLE pedidos ALTER COLUMN numero_pedido SET DEFAULT 1;
+
+-- =============================================
+-- FUNCIÓN: Número de pedido diario
+-- Reinicia a 1 cada día
+-- =============================================
+CREATE OR REPLACE FUNCTION get_next_numero_pedido_diario()
+RETURNS INTEGER AS $$
+DECLARE
+    next_num INTEGER;
+BEGIN
+    -- Obtener el máximo número de pedido del día actual
+    SELECT COALESCE(MAX(numero_pedido), 0) + 1 INTO next_num
+    FROM pedidos
+    WHERE DATE(created_at AT TIME ZONE 'America/Lima') = DATE(NOW() AT TIME ZONE 'America/Lima');
+    
+    RETURN next_num;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger para asignar número de pedido diario automáticamente
+CREATE OR REPLACE FUNCTION set_numero_pedido_diario()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.numero_pedido := get_next_numero_pedido_diario();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Crear el trigger (eliminar si existe)
+DROP TRIGGER IF EXISTS trigger_set_numero_pedido ON pedidos;
+CREATE TRIGGER trigger_set_numero_pedido
+    BEFORE INSERT ON pedidos
+    FOR EACH ROW
+    EXECUTE FUNCTION set_numero_pedido_diario();
+
+-- Índice único para garantizar que numero_pedido sea único por día
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedidos_numero_fecha_unico 
+ON pedidos (numero_pedido, DATE(created_at AT TIME ZONE 'America/Lima'));
 
 -- =============================================
 -- COMENTARIOS PARA NUEVAS TABLAS

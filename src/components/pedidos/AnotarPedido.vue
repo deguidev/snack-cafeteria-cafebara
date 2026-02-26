@@ -76,6 +76,11 @@ const tipoPedido = ref<'para_servir' | 'para_llevar' | 'delivery' | null>('para_
 const telefono = ref('');
 const direccion = ref('');
 
+// Estado de edición
+const modoEdicion = ref(false);
+const pedidoEditandoId = ref<string | null>(null);
+const numeroPedidoEditando = ref<number | null>(null);
+
 // Cargar categorías desde Supabase
 const cargarCategorias = async () => {
   try {
@@ -136,6 +141,59 @@ const cargarProductos = async () => {
   }
 };
 
+// Cargar pedido desde localStorage si existe (modo edición)
+const cargarPedidoParaEditar = () => {
+  const pedidoGuardado = localStorage.getItem('pedidoParaEditar');
+  if (pedidoGuardado) {
+    try {
+      const pedido = JSON.parse(pedidoGuardado);
+      modoEdicion.value = true;
+      pedidoEditandoId.value = pedido.id;
+      numeroPedidoEditando.value = pedido.numero_pedido;
+      mesaNumero.value = pedido.mesa_numero;
+      nombreCliente.value = pedido.nombre_cliente || '';
+      telefono.value = pedido.telefono || '';
+      direccion.value = pedido.direccion || '';
+      tipoPedido.value = pedido.tipo_pedido || 'para_servir';
+      
+      // Transformar items asegurando que todos los valores numéricos sean válidos
+      pedidoActual.value = (pedido.items || []).map((item: any) => ({
+        producto: {
+          id: item.producto?.id || '',
+          nombre: item.producto?.nombre || 'Producto',
+          descripcion: item.producto?.descripcion || '',
+          precio: Number(item.producto?.precio) || 0,
+          categoria_id: item.producto?.categoria_id || item.producto?.categoria || '',
+          subcategoria_id: item.producto?.subcategoria_id || null,
+          imagen_url: item.producto?.imagen_url || '',
+          disponible: item.producto?.disponible ?? true
+        },
+        cantidad: Number(item.cantidad) || 1,
+        modificadores: (item.modificadores || []).map((mod: any) => ({
+          modificador: {
+            id: mod.modificador?.id || '',
+            nombre: mod.modificador?.nombre || '',
+            descripcion: mod.modificador?.descripcion || null,
+            tipo: mod.modificador?.tipo || 'extra',
+            precio_adicional: Number(mod.modificador?.precio_adicional) || 0,
+            categoria_id: mod.modificador?.categoria_id || null,
+            activo: mod.modificador?.activo ?? true
+          },
+          cantidad: Number(mod.cantidad) || 1
+        }))
+      }));
+      
+      mostrarCarrito.value = true;
+      
+      // Limpiar localStorage
+      localStorage.removeItem('pedidoParaEditar');
+    } catch (err) {
+      console.error('Error cargando pedido para editar:', err);
+      localStorage.removeItem('pedidoParaEditar');
+    }
+  }
+};
+
 // Cargar todos los datos
 const cargarDatos = async () => {
   loading.value = true;
@@ -150,6 +208,9 @@ const cargarDatos = async () => {
   if (subcatsDeCategoriaActiva.length > 0) {
     subcategoriaActiva.value = subcatsDeCategoriaActiva[0].id;
   }
+  
+  // Cargar pedido para editar si existe
+  cargarPedidoParaEditar();
   
   loading.value = false;
 };
@@ -221,6 +282,11 @@ const eliminarProducto = (productoId: string) => {
   pedidoActual.value = pedidoActual.value.filter(item => item.producto.id !== productoId);
 };
 
+// Agregar item con modificadores (usado cuando se separa un item del grupo)
+const agregarItemConModificadores = (item: ItemPedido) => {
+  pedidoActual.value.push(item);
+};
+
 // Total del pedido (incluyendo modificadores)
 const totalPedido = computed(() => {
   return pedidoActual.value.reduce((sum, item) => {
@@ -276,32 +342,73 @@ const guardarPedido = async () => {
     guardandoPedido.value = true;
     
     console.log('=== INICIANDO GUARDADO DE PEDIDO ===');
+    console.log('Modo edición:', modoEdicion.value);
     console.log('Pedido actual:', JSON.stringify(pedidoActual.value, null, 2));
     console.log('Tipo de pedido:', tipoPedido.value);
     console.log('Mesa:', mesaNumero.value);
     console.log('Cliente:', nombreCliente.value);
     console.log('Total calculado:', totalPedido.value);
     
-    // 1. Crear el pedido principal
-    const { data: pedido, error: errorPedido } = await supabase
-      .from('pedidos')
-      .insert([{
-        tipo_pedido: tipoPedido.value,
-        mesa_numero: mesaNumero.value,
-        nombre_cliente: nombreCliente.value || null,
-        telefono: telefono.value || null,
-        direccion: direccion.value || null,
-        subtotal: totalPedido.value,
-        total: totalPedido.value,
-        estado: 'pendiente'
-      }])
-      .select()
-      .single();
+    let pedidoId: string;
+    
+    if (modoEdicion.value && pedidoEditandoId.value) {
+      // MODO EDICIÓN: Actualizar pedido existente
+      pedidoId = pedidoEditandoId.value;
+      
+      // 1a. Actualizar datos del pedido
+      const { error: errorUpdate } = await supabase
+        .from('pedidos')
+        .update({
+          tipo_pedido: tipoPedido.value,
+          mesa_numero: mesaNumero.value,
+          nombre_cliente: nombreCliente.value || null,
+          telefono: telefono.value || null,
+          direccion: direccion.value || null,
+          subtotal: totalPedido.value,
+          total: totalPedido.value
+        })
+        .eq('id', pedidoId);
 
-    if (errorPedido) {
-      console.error('Error creando pedido:', errorPedido);
-      alert('Error al crear el pedido. Por favor, intenta nuevamente.');
-      return;
+      if (errorUpdate) {
+        console.error('Error actualizando pedido:', errorUpdate);
+        alert('Error al actualizar el pedido. Por favor, intenta nuevamente.');
+        return;
+      }
+      
+      // 1b. Eliminar detalles anteriores (los modificadores se eliminan en cascada)
+      const { error: errorDeleteDetalles } = await supabase
+        .from('pedido_detalle')
+        .delete()
+        .eq('pedido_id', pedidoId);
+      
+      if (errorDeleteDetalles) {
+        console.error('Error eliminando detalles anteriores:', errorDeleteDetalles);
+      }
+      
+    } else {
+      // MODO CREACIÓN: Crear nuevo pedido
+      const { data: pedido, error: errorPedido } = await supabase
+        .from('pedidos')
+        .insert([{
+          tipo_pedido: tipoPedido.value,
+          mesa_numero: mesaNumero.value,
+          nombre_cliente: nombreCliente.value || null,
+          telefono: telefono.value || null,
+          direccion: direccion.value || null,
+          subtotal: totalPedido.value,
+          total: totalPedido.value,
+          estado: 'pendiente'
+        }])
+        .select()
+        .single();
+
+      if (errorPedido) {
+        console.error('Error creando pedido:', errorPedido);
+        alert('Error al crear el pedido. Por favor, intenta nuevamente.');
+        return;
+      }
+      
+      pedidoId = pedido.id;
     }
 
     // 2. Crear los detalles del pedido y obtener sus IDs
@@ -313,7 +420,7 @@ const guardarPedido = async () => {
       const subtotal = (item.producto.precio + precioModificadores) * item.cantidad;
       
       return {
-        pedido_id: pedido.id,
+        pedido_id: pedidoId,
         producto_id: item.producto.id,
         nombre_producto: item.producto.nombre,
         cantidad: item.cantidad,
@@ -335,7 +442,9 @@ const guardarPedido = async () => {
     if (errorDetalle || !detallesInsertados) {
       console.error('Error creando detalle:', errorDetalle);
       console.error('Detalles que se intentaron insertar:', detallesParaInsertar);
-      await supabase.from('pedidos').delete().eq('id', pedido.id);
+      if (!modoEdicion.value) {
+        await supabase.from('pedidos').delete().eq('id', pedidoId);
+      }
       alert(`Error al guardar los productos del pedido: ${errorDetalle?.message || 'Sin detalles'}`);
       return;
     }
@@ -354,6 +463,7 @@ const guardarPedido = async () => {
             pedido_detalle_id: detalleId,
             modificador_id: mod.modificador.id,
             nombre_modificador: mod.modificador.nombre,
+            tipo: mod.modificador.tipo,
             precio_adicional: mod.modificador.precio_adicional,
             cantidad: mod.cantidad
           });
@@ -372,7 +482,7 @@ const guardarPedido = async () => {
       }
     }
 
-    console.log('Pedido guardado exitosamente:', pedido);
+    console.log('Pedido guardado exitosamente, ID:', pedidoId);
     
     // 🎉 Confetti al guardar pedido
     confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
@@ -406,6 +516,10 @@ const limpiarPedido = () => {
   direccion.value = '';
   mostrarResumen.value = false;
   mostrarCarrito.value = false;
+  // Resetear modo edición
+  modoEdicion.value = false;
+  pedidoEditandoId.value = null;
+  numeroPedidoEditando.value = null;
 };
 
 // Cambiar categoría
@@ -440,8 +554,8 @@ onMounted(() => {
 
 <template>
   <div class="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50">
-    <!-- Header Profesional -->
-    <header class="header-container relative overflow-hidden px-4 py-4 shadow-2xl sm:px-6 sm:py-5">
+    <!-- Header Profesional (Fixed) -->
+    <header class="header-container overflow-hidden px-4 py-4 shadow-2xl sm:px-6 sm:py-5">
       <!-- Animated Background -->
       <div class="header-bg"></div>
       <div class="header-particles">
@@ -457,8 +571,13 @@ onMounted(() => {
               <Icon icon="mdi:arrow-left" class="h-5 w-5 sm:h-6 sm:w-6 text-white" />
             </a>
             <div class="header-title-container">
-              <h1 class="header-title">Anotar Pedido</h1>
-              <p class="header-subtitle">Selecciona productos del menú</p>
+              <h1 class="header-title">
+                {{ modoEdicion ? 'Editando Pedido' : 'Anotar Pedido' }}
+                <span v-if="modoEdicion && numeroPedidoEditando" class="text-amber-200 text-lg ml-2">#{{ numeroPedidoEditando }}</span>
+              </h1>
+              <p class="header-subtitle">
+                {{ modoEdicion ? 'Modifica los productos del pedido' : 'Selecciona productos del menú' }}
+              </p>
             </div>
           </div>
           
@@ -584,6 +703,7 @@ onMounted(() => {
       @agregarProducto="agregarProducto"
       @quitarProducto="quitarProducto"
       @eliminarProducto="eliminarProducto"
+      @agregarItemConModificadores="agregarItemConModificadores"
       @guardarPedido="guardarPedido"
       @limpiarPedido="limpiarPedido"
       @redirectToPedidos="handleRedirectToPedidos"
@@ -595,7 +715,9 @@ onMounted(() => {
 /* ========== HEADER STYLES ========== */
 .header-container {
   background: linear-gradient(135deg, #78350f 0%, #92400e 50%, #a16207 100%);
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
 
 .header-bg {

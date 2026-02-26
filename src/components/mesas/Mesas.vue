@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue';
 import { Icon } from '@iconify/vue';
 import confetti from 'canvas-confetti';
 import { supabase } from '../../lib/supabaseClient';
+import MesasGrid from './MesasGrid.vue';
 
 interface Mesa {
   id: string;
@@ -129,32 +130,70 @@ const cerrarModal = () => {
   mesaSeleccionada.value = null;
 };
 
-const pagarMesa = () => {
-  if (mesaSeleccionada.value) {
+// Estado para calculadora de pago
+const mostrarCalculadora = ref(false);
+const montoRecibido = ref(0);
+
+const vuelto = computed(() => {
+  return Math.max(0, montoRecibido.value - totalPedido.value);
+});
+
+const toggleCalculadora = () => {
+  mostrarCalculadora.value = !mostrarCalculadora.value;
+  if (mostrarCalculadora.value) {
+    montoRecibido.value = 0;
+  }
+};
+
+const pagarMesa = async () => {
+  if (!mesaSeleccionada.value || !mesaSeleccionada.value.pedidos) return;
+  
+  try {
+    // Actualizar todos los pedidos de la mesa a 'pagado'
+    const pedidoIds = mesaSeleccionada.value.pedidos.map(p => p.id);
+    
+    const { error } = await supabase
+      .from('pedidos')
+      .update({ 
+        estado: 'pagado',
+        monto_pagado: montoRecibido.value
+      })
+      .in('id', pedidoIds);
+
+    if (error) throw error;
+
+    // Mostrar confetti
+    confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+    setTimeout(() => {
+      confetti({
+        particleCount: 50,
+        angle: 60,
+        spread: 55,
+        origin: { x: 0 },
+      });
+      confetti({
+        particleCount: 50,
+        angle: 120,
+        spread: 55,
+        origin: { x: 1 },
+      });
+    }, 200);
+
+    // Actualizar localmente
     const mesa = mesas.value.find(m => m.id === mesaSeleccionada.value?.id);
     if (mesa) {
-      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-      setTimeout(() => {
-        confetti({
-          particleCount: 50,
-          angle: 60,
-          spread: 55,
-          origin: { x: 0 },
-        });
-        confetti({
-          particleCount: 50,
-          angle: 120,
-          spread: 55,
-          origin: { x: 1 },
-        });
-      }, 200);
-      setTimeout(() => {
-        mesa.estado = 'disponible';
-        mesa.pedidos = undefined;
-        mesa.tiempo_ocupado = undefined;
-        cerrarModal();
-      }, 800);
+      mesa.estado = 'disponible';
+      mesa.pedidos = undefined;
     }
+
+    setTimeout(() => {
+      mostrarCalculadora.value = false;
+      montoRecibido.value = 0;
+      cerrarModal();
+    }, 800);
+  } catch (err) {
+    console.error('Error al pagar:', err);
+    alert('Error al procesar el pago');
   }
 };
 
@@ -422,52 +461,98 @@ onMounted(() => {
         </div>
 
         <div v-if="mesaSeleccionada.estado === 'ocupada' && mesaSeleccionada.pedidos" class="mt-6">
-          <h3 class="mb-3 text-lg font-semibold text-gray-900">Pedido Actual</h3>
-          <div class="space-y-2 rounded-lg bg-gray-50 p-4">
+          <h3 class="mb-3 text-lg font-semibold text-gray-900">Pedidos de la Mesa</h3>
+          <div class="space-y-3 rounded-lg bg-gray-50 p-4 max-h-60 overflow-y-auto">
             <div
               v-for="pedido in mesaSeleccionada.pedidos"
               :key="pedido.id"
-              class="flex items-center justify-between border-b border-gray-200 pb-2 last:border-0 last:pb-0"
+              class="bg-white rounded-lg p-3 shadow-sm"
             >
-              <div class="flex items-center gap-3">
-                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-800">
-                  {{ pedido.cantidad }}
-                </span>
-                <span class="font-medium text-gray-700">{{ pedido.producto }}</span>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold text-amber-700">Pedido #{{ pedido.numero_pedido }}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{{ pedido.estado }}</span>
               </div>
-              <span class="font-semibold text-gray-900">S/ {{ (pedido.precio * pedido.cantidad).toFixed(2) }}</span>
+              <div class="space-y-1">
+                <div
+                  v-for="(item, idx) in pedido.items"
+                  :key="idx"
+                  class="flex items-center justify-between text-sm"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-800">
+                      {{ item.cantidad }}
+                    </span>
+                    <span class="text-gray-700">{{ item.nombre_producto }}</span>
+                  </div>
+                  <span class="font-medium text-gray-900">S/ {{ (item.precio_unitario * item.cantidad).toFixed(2) }}</span>
+                </div>
+              </div>
+              <div class="mt-2 pt-2 border-t border-gray-200 flex justify-between">
+                <span class="text-xs text-gray-500">Subtotal:</span>
+                <span class="text-sm font-bold text-gray-800">S/ {{ pedido.total.toFixed(2) }}</span>
+              </div>
             </div>
             
             <div class="mt-4 flex items-center justify-between border-t-2 border-amber-800 pt-3">
-              <span class="text-lg font-bold text-gray-900">Total:</span>
+              <span class="text-lg font-bold text-gray-900">Total Mesa:</span>
               <span class="text-2xl font-bold text-amber-800">S/ {{ totalPedido.toFixed(2) }}</span>
             </div>
           </div>
-        </div>
 
-        <div class="mt-6 grid grid-cols-2 gap-4 rounded-lg bg-amber-50 p-4">
-          <div>
-            <p class="text-xs font-medium text-amber-800">Posición</p>
-            <p class="mt-1 text-sm font-semibold text-gray-900">
-              ({{ mesaSeleccionada.posicion_x }}, {{ mesaSeleccionada.posicion_y }})
-            </p>
-          </div>
-          <div>
-            <p class="text-xs font-medium text-amber-800">Tamaño</p>
-            <p class="mt-1 text-sm font-semibold text-gray-900">
-              {{ mesaSeleccionada.ancho }} × {{ mesaSeleccionada.alto }}
-            </p>
-          </div>
+          <!-- Calculadora de pago -->
+          <Transition name="slide-down">
+            <div v-if="mostrarCalculadora" class="mt-4 bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
+              <h4 class="text-sm font-bold text-emerald-800 flex items-center gap-2">
+                <Icon icon="mdi:calculator" class="h-4 w-4" />
+                Calculadora de Pago
+              </h4>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="text-xs font-semibold text-gray-600 block mb-1">Monto Recibido:</label>
+                  <input
+                    v-model.number="montoRecibido"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    class="w-full px-3 py-2 border border-emerald-300 rounded-lg text-lg font-bold focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-gray-600 block mb-1">Vuelto:</label>
+                  <div class="w-full px-3 py-2 bg-emerald-100 border border-emerald-300 rounded-lg text-lg font-bold text-emerald-800">
+                    S/ {{ vuelto.toFixed(2) }}
+                  </div>
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  @click="toggleCalculadora"
+                  class="flex-1 px-3 py-2 text-sm font-semibold rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  @click="pagarMesa"
+                  :disabled="montoRecibido < totalPedido"
+                  class="flex-1 px-3 py-2 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Icon icon="mdi:check" class="h-5 w-5" />
+                  Confirmar Pago
+                </button>
+              </div>
+            </div>
+          </Transition>
         </div>
 
         <div class="mt-6 flex gap-3">
           <button
-            v-if="mesaSeleccionada.estado === 'ocupada'"
-            @click="pagarMesa"
+            v-if="mesaSeleccionada.estado === 'ocupada' && !mostrarCalculadora"
+            @click="toggleCalculadora"
             class="flex-1 rounded-lg bg-green-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-green-700"
           >
-            <Icon icon="mdi:cash-check" class="mr-2 inline h-5 w-5" />
-            Pagar
+            <Icon icon="mdi:cash-register" class="mr-2 inline h-5 w-5" />
+            Pagar Mesa
           </button>
           <button
             @click="cerrarModal"
@@ -494,5 +579,16 @@ onMounted(() => {
   .restaurant-grid {
     font-size: 0.75rem;
   }
+}
+
+/* Transición de la calculadora */
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all 0.2s ease;
+}
+.slide-down-enter-from,
+.slide-down-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
 }
 </style>

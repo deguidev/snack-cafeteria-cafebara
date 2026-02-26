@@ -61,12 +61,40 @@ const pedidoSeleccionado = ref<Pedido | null>(null);
 const mostrarModal = ref(false);
 const montoRecibido = ref<number>(0);
 
-// Cargar pedidos desde Supabase
+// Filtro de fecha (por defecto hoy)
+const fechaSeleccionada = ref(new Date().toISOString().split('T')[0]);
+
+// Formatear fecha para mostrar
+const fechaMostrar = computed(() => {
+  const fecha = new Date(fechaSeleccionada.value + 'T12:00:00');
+  const hoy = new Date();
+  const ayer = new Date(hoy);
+  ayer.setDate(ayer.getDate() - 1);
+  
+  if (fechaSeleccionada.value === hoy.toISOString().split('T')[0]) {
+    return 'Hoy';
+  } else if (fechaSeleccionada.value === ayer.toISOString().split('T')[0]) {
+    return 'Ayer';
+  }
+  return fecha.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' });
+});
+
+// Cambiar fecha y recargar
+const cambiarFecha = (fecha: string) => {
+  fechaSeleccionada.value = fecha;
+  cargarPedidos();
+};
+
+// Cargar pedidos desde Supabase (filtrado por fecha)
 const cargarPedidos = async () => {
   try {
     loading.value = true;
     
-    // Cargar pedidos con sus detalles y productos
+    // Calcular rango de fecha seleccionada
+    const inicioFecha = new Date(fechaSeleccionada.value + 'T00:00:00').toISOString();
+    const finFecha = new Date(fechaSeleccionada.value + 'T23:59:59').toISOString();
+    
+    // Cargar pedidos con sus detalles y productos (filtrado por fecha)
     const { data: pedidosData, error: errorPedidos } = await supabase
       .from('pedidos')
       .select(`
@@ -91,11 +119,14 @@ const cargarPedidos = async () => {
             id,
             modificador_id,
             nombre_modificador,
+            tipo,
             precio_adicional,
             cantidad
           )
         )
       `)
+      .gte('created_at', inicioFecha)
+      .lte('created_at', finFecha)
       .order('created_at', { ascending: false });
 
     if (errorPedidos) throw errorPedidos;
@@ -109,7 +140,16 @@ const cargarPedidos = async () => {
         cantidad: detalle.cantidad,
         precio_unitario: detalle.precio_unitario,
         subtotal: detalle.subtotal,
-        modificadores: detalle.pedido_detalle_modificadores || []
+        // Transformar modificadores al formato esperado por PedidoCard
+        modificadores: (detalle.pedido_detalle_modificadores || []).map((mod: any) => ({
+          modificador: {
+            id: mod.modificador_id,
+            nombre: mod.nombre_modificador,
+            tipo: mod.tipo || 'extra', // Por defecto 'extra' si no tiene tipo
+            precio_adicional: mod.precio_adicional || 0
+          },
+          cantidad: mod.cantidad || 1
+        }))
       }))
     }));
 
@@ -188,6 +228,61 @@ const verDetallesPedido = (pedido: Pedido) => {
 const cerrarModal = () => {
   mostrarModal.value = false;
   pedidoSeleccionado.value = null;
+};
+
+// Editar pedido - redirigir a AnotarPedido con los datos del pedido
+const editarPedido = (pedido: Pedido) => {
+  // Guardar el pedido en localStorage para que AnotarPedido lo cargue
+  // Los modificadores ya vienen transformados desde cargarPedidos()
+  const pedidoParaEditar = {
+    id: pedido.id,
+    numero_pedido: pedido.numero_pedido,
+    mesa_numero: pedido.mesa_numero,
+    nombre_cliente: pedido.nombre_cliente,
+    telefono: pedido.telefono || '',
+    direccion: pedido.direccion || '',
+    tipo_pedido: pedido.tipo_pedido,
+    items: pedido.items.map(item => ({
+      producto: {
+        id: item.producto?.id || '',
+        nombre: item.producto?.nombre || 'Producto',
+        descripcion: item.producto?.descripcion || '',
+        precio: item.producto?.precio || 0,
+        categoria: item.producto?.categoria_id || '',
+        imagen_url: item.producto?.imagen_url || '',
+        disponible: item.producto?.disponible ?? true
+      },
+      cantidad: item.cantidad || 1,
+      // Los modificadores ya tienen la estructura correcta desde cargarPedidos
+      modificadores: item.modificadores || []
+    }))
+  };
+  localStorage.setItem('pedidoParaEditar', JSON.stringify(pedidoParaEditar));
+  window.location.href = '/anotar-pedido';
+};
+
+// Procesar pago desde la calculadora inline de PedidoCard
+const procesarPagoInline = async (pedidoId: string, montoPagado: number) => {
+  try {
+    const { error } = await supabase
+      .from('pedidos')
+      .update({ 
+        estado: 'pagado',
+        monto_pagado: montoPagado
+      })
+      .eq('id', pedidoId);
+
+    if (error) throw error;
+
+    // Actualizar localmente
+    const pedido = pedidos.value.find(p => p.id === pedidoId);
+    if (pedido) {
+      pedido.estado = 'pagado';
+    }
+  } catch (err) {
+    console.error('Error procesando pago:', err);
+    alert('Error al procesar el pago');
+  }
 };
 
 // Cambiar estado del pedido
@@ -331,10 +426,55 @@ onMounted(() => {
             </div>
           </div>
           
-          <div class="flex items-center gap-2">
-            <span class=" xs:inline text-xs text-amber-100 sm:text-sm">
-              Total: {{ pedidos.length }} pedido{{ pedidos.length !== 1 ? 's' : '' }}
+          <div class="flex items-center gap-2 sm:gap-3">
+            <span class="xs:inline text-xs text-amber-100 sm:text-sm">
+              {{ pedidos.length }} pedido{{ pedidos.length !== 1 ? 's' : '' }}
             </span>
+            <a 
+              href="/anotar-pedido" 
+              class="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-400 transition-colors sm:px-4 sm:py-2 sm:text-sm"
+            >
+              <Icon icon="mdi:plus" class="h-4 w-4" />
+              <span class="hidden sm:inline">Nuevo Pedido</span>
+              <span class="sm:hidden">Nuevo</span>
+            </a>
+          </div>
+        </div>
+        
+        <!-- Filtro de fecha -->
+        <div class="mt-3 flex items-center justify-between gap-3 bg-white/10 rounded-lg px-3 py-2">
+          <div class="flex items-center gap-2">
+            <Icon icon="mdi:calendar" class="h-5 w-5 text-amber-200" />
+            <span class="text-sm font-semibold text-white">{{ fechaMostrar }}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              @click="cambiarFecha(new Date(new Date(fechaSeleccionada).getTime() - 86400000).toISOString().split('T')[0])"
+              class="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+            >
+              <Icon icon="mdi:chevron-left" class="h-5 w-5 text-white" />
+            </button>
+            <input
+              type="date"
+              :value="fechaSeleccionada"
+              @change="cambiarFecha(($event.target as HTMLInputElement).value)"
+              class="rounded-lg border-0 bg-white/20 px-3 py-1.5 text-sm text-white placeholder-amber-200 focus:ring-2 focus:ring-white/50"
+            />
+            <button
+              @click="cambiarFecha(new Date(new Date(fechaSeleccionada).getTime() + 86400000).toISOString().split('T')[0])"
+              class="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+              :disabled="fechaSeleccionada >= new Date().toISOString().split('T')[0]"
+              :class="{ 'opacity-50 cursor-not-allowed': fechaSeleccionada >= new Date().toISOString().split('T')[0] }"
+            >
+              <Icon icon="mdi:chevron-right" class="h-5 w-5 text-white" />
+            </button>
+            <button
+              v-if="fechaSeleccionada !== new Date().toISOString().split('T')[0]"
+              @click="cambiarFecha(new Date().toISOString().split('T')[0])"
+              class="ml-2 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-400 transition-colors"
+            >
+              Hoy
+            </button>
           </div>
         </div>
       </div>
@@ -364,7 +504,7 @@ onMounted(() => {
               class="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200 overflow-hidden"
               :class="{ 'opacity-75': estadoGroup.id === 'entregado' }"
             >
-              <PedidoCard :pedido="pedido" @ver-detalles="verDetallesPedido" @cambiar-estado="cambiarEstado" />
+              <PedidoCard :pedido="pedido" @ver-detalles="verDetallesPedido" @cambiar-estado="cambiarEstado" @editar-pedido="editarPedido" @procesar-pago="procesarPagoInline" @pago-completado="cargarPedidos" />
             </div>
           </div>
         </div>
@@ -374,8 +514,8 @@ onMounted(() => {
           <div class="mx-auto w-16 h-16 sm:w-20 sm:h-20 bg-gray-100 rounded-full flex items-center justify-center mb-3 sm:mb-4">
             <Icon icon="mdi:clipboard-list" class="h-8 w-8 sm:h-10 sm:w-10 text-gray-400" />
           </div>
-          <p class="text-gray-600 font-medium text-sm sm:text-base">No hay pedidos registrados</p>
-          <p class="text-xs text-gray-500 mt-1 sm:text-sm sm:mt-1">Los pedidos aparecerán aquí cuando se creen</p>
+          <p class="text-gray-600 font-medium text-sm sm:text-base">No hay pedidos para {{ fechaMostrar.toLowerCase() }}</p>
+          <p class="text-xs text-gray-500 mt-1 sm:text-sm sm:mt-1">Selecciona otra fecha o crea un nuevo pedido</p>
         </div>
       </div>
     </div>

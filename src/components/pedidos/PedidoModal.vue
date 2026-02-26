@@ -11,10 +11,17 @@ interface Producto {
 }
 
 interface ItemModificador {
-  modificador_id: string;
-  nombre_modificador: string;
-  precio_adicional: number;
-  cantidad: number;
+  modificador_id?: string;
+  nombre_modificador?: string;
+  precio_adicional?: number;
+  cantidad?: number;
+  // Estructura alternativa (transformada)
+  modificador?: {
+    id: string;
+    nombre: string;
+    tipo: 'extra' | 'sin' | 'sustitucion';
+    precio_adicional: number;
+  };
 }
 
 interface ItemPedido {
@@ -149,6 +156,32 @@ const eliminarPedido = () => {
   }
 };
 
+// Helpers para modificadores (soporta ambas estructuras)
+const getModNombre = (mod: ItemModificador) => mod.modificador?.nombre || mod.nombre_modificador || '';
+const getModCantidad = (mod: ItemModificador) => mod.cantidad || 1;
+const getModPrecio = (mod: ItemModificador) => mod.modificador?.precio_adicional ?? mod.precio_adicional ?? 0;
+const getModTipo = (mod: ItemModificador) => mod.modificador?.tipo || 'extra';
+const getModId = (mod: ItemModificador) => mod.modificador?.id || mod.modificador_id || '';
+
+// Colores según tipo de modificador
+const getModificadorColor = (tipo: string) => {
+  switch (tipo) {
+    case 'extra': return 'bg-green-100 text-green-700';
+    case 'sin': return 'bg-red-100 text-red-700';
+    case 'sustitucion': return 'bg-blue-100 text-blue-700';
+    default: return 'bg-gray-100 text-gray-700';
+  }
+};
+
+const getModificadorPrefijo = (tipo: string) => {
+  switch (tipo) {
+    case 'extra': return '+';
+    case 'sin': return 'Sin';
+    case 'sustitucion': return '↔';
+    default: return '+';
+  }
+};
+
 const updateMontoRecibido = (value: number) => {
   emit('update:montoRecibido', value);
 };
@@ -240,45 +273,40 @@ const updateMontoRecibido = (value: number) => {
         </div>
 
         <!-- Productos del Pedido -->
-        <div>
-          <h4 class="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-            <Icon icon="mdi:food" class="h-4 w-4 text-amber-600" />
-            Productos ({{ totalItems }})
-          </h4>
+        <div class="bg-gray-50 rounded-lg p-3">
           <div class="space-y-2">
-            <div
-              v-for="item in pedidoSeleccionado.items"
+            <div 
+              v-for="item in pedidoSeleccionado.items" 
               :key="item.id"
-              class="bg-white border border-gray-200 rounded-xl p-3 shadow-sm"
+              class="text-sm"
             >
-              <div class="flex items-start justify-between">
-                <div class="flex-1">
-                  <p class="text-sm font-bold text-gray-900">{{ item.producto.nombre }}</p>
-                  <p class="text-xs text-gray-500 mt-0.5">S/ {{ item.precio_unitario.toFixed(2) }} c/u</p>
-                  
-                  <!-- Modificadores del item -->
-                  <div v-if="item.modificadores && item.modificadores.length > 0" class="mt-2 space-y-1">
-                    <div 
-                      v-for="mod in item.modificadores" 
-                      :key="mod.modificador_id"
-                      class="flex items-center gap-1 text-xs"
-                    >
-                      <span class="text-amber-600">+</span>
-                      <span class="text-gray-600">
-                        {{ mod.cantidad > 1 ? `${mod.cantidad}x ` : '' }}{{ mod.nombre_modificador }}
-                      </span>
-                      <span v-if="mod.precio_adicional > 0" class="text-green-600 font-semibold">
-                        +S/{{ (mod.precio_adicional * mod.cantidad).toFixed(2) }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div class="text-right ml-3">
-                  <span class="inline-flex items-center justify-center h-6 w-6 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2 flex-1 min-w-0">
+                  <span class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
                     {{ item.cantidad }}
                   </span>
-                  <p class="text-sm font-bold text-amber-600 mt-1">S/ {{ item.subtotal.toFixed(2) }}</p>
+                  <span class="text-gray-800 font-medium truncate">{{ item.producto.nombre }}</span>
                 </div>
+                <div class="flex items-center gap-3 flex-shrink-0 ml-2">
+                  <span class="text-xs text-gray-500">S/{{ item.precio_unitario.toFixed(2) }} c/u</span>
+                  <span class="text-sm font-bold text-gray-900">S/{{ item.subtotal.toFixed(2) }}</span>
+                </div>
+              </div>
+              <!-- Modificadores del producto -->
+              <div v-if="item.modificadores && item.modificadores.length > 0" class="ml-7 mt-1 flex flex-wrap gap-1">
+                <span
+                  v-for="mod in item.modificadores"
+                  :key="getModId(mod)"
+                  :class="[
+                    'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium',
+                    getModificadorColor(getModTipo(mod))
+                  ]"
+                >
+                  <span>{{ getModificadorPrefijo(getModTipo(mod)) }}</span>
+                  <span>{{ getModNombre(mod) }}</span>
+                  <span v-if="getModCantidad(mod) > 1">x{{ getModCantidad(mod) }}</span>
+                  <span v-if="getModPrecio(mod) > 0" class="opacity-75">+S/{{ (getModPrecio(mod) * getModCantidad(mod)).toFixed(2) }}</span>
+                </span>
               </div>
             </div>
           </div>
