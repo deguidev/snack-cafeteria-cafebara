@@ -298,7 +298,15 @@ const formatearEstado = (estado: string) => {
           <Icon icon="mdi:pencil" class="h-4 w-4" />
         </button>
         <button
-          v-if="pedido.estado !== 'pagado'"
+          v-if="pedido.estado === 'pendiente'"
+          @click="emit('cambiar-estado', pedido.id, 'entregado')"
+          class="flex items-center gap-1 px-2 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm"
+          title="Marcar como entregado"
+        >
+          <Icon icon="mdi:hand-okay" class="h-4 w-4" />
+        </button>
+        <button
+          v-if="pedido.estado === 'entregado'"
           @click="toggleCalculadora"
           :class="[
             'flex items-center gap-1 px-2 py-2 text-xs font-semibold rounded-lg transition-colors shadow-sm',

@@ -1,7 +1,29 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import { supabase } from '../../lib/supabaseClient';
+import { Bar } from 'vue-chartjs';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend
+} from 'chart.js';
+import ChartDataLabels from 'chartjs-plugin-datalabels';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Title, Tooltip, Legend, ChartDataLabels);
+
+// Colores para las barras del gráfico
+const coloresBarras = [
+  '#059669', '#0891b2', '#7c3aed', '#db2777', '#ea580c',
+  '#16a34a', '#2563eb', '#9333ea', '#e11d48', '#d97706',
+  '#14b8a6', '#6366f1', '#c026d3', '#f43f5e', '#f59e0b'
+];
 
 interface PedidoReporte {
   id: string;
@@ -45,6 +67,96 @@ const estadisticas = ref<EstadisticasGenerales>({
   ticketPromedio: 0,
   productosVendidos: 0
 });
+
+// Datos para el gráfico de ventas por día
+const ventasPorDia = ref<{ fecha: string; total: number }[]>([]);
+
+// Datos del gráfico
+const chartData = computed(() => {
+  const datos = ventasPorDia.value.map(v => v.total);
+  const colores = ventasPorDia.value.map((_, i) => coloresBarras[i % coloresBarras.length]);
+  
+  return {
+    labels: ventasPorDia.value.map(v => {
+      const fecha = new Date(v.fecha + 'T12:00:00');
+      return fecha.toLocaleDateString('es-PE', { day: '2-digit', month: 'short' });
+    }),
+    datasets: [
+      {
+        type: 'line' as const,
+        label: 'Tendencia',
+        data: datos,
+        borderColor: '#374151',
+        borderWidth: 2,
+        pointBackgroundColor: '#374151',
+        pointRadius: 4,
+        tension: 0.3,
+        fill: false,
+        order: 0,
+        datalabels: {
+          display: false
+        }
+      },
+      {
+        type: 'bar' as const,
+        label: 'Ventas (S/)',
+        backgroundColor: colores,
+        borderColor: colores.map(c => c),
+        borderWidth: 1,
+        borderRadius: 6,
+        data: datos,
+        order: 1
+      }
+    ]
+  };
+});
+
+const chartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      display: true,
+      position: 'top' as const,
+      labels: {
+        usePointStyle: true,
+        padding: 15
+      }
+    },
+    tooltip: {
+      callbacks: {
+        label: (context: any) => `S/ ${context.raw.toFixed(2)}`
+      }
+    },
+    datalabels: {
+      anchor: 'end' as const,
+      align: 'top' as const,
+      color: '#374151',
+      font: {
+        weight: 'bold' as const,
+        size: 11
+      },
+      formatter: (value: number) => `S/${value.toFixed(0)}`,
+      display: (context: any) => context.dataset.type === 'bar'
+    }
+  },
+  scales: {
+    y: {
+      beginAtZero: true,
+      ticks: {
+        callback: (value: any) => `S/ ${value}`
+      },
+      grid: {
+        color: '#e5e7eb'
+      }
+    },
+    x: {
+      grid: {
+        display: false
+      }
+    }
+  }
+};
 
 // Inicializar fechas (hoy)
 const inicializarFechas = () => {
@@ -117,6 +229,19 @@ const cargarReporte = async () => {
       .map(([nombre, data]) => ({ nombre, ...data }))
       .sort((a, b) => b.cantidad - a.cantidad)
       .slice(0, 10);
+
+    // Calcular ventas por día para el gráfico
+    const ventasPorDiaMap = new Map<string, number>();
+    pedidosPagados.forEach(pedido => {
+      const fecha = pedido.created_at.split('T')[0];
+      const existing = ventasPorDiaMap.get(fecha) || 0;
+      ventasPorDiaMap.set(fecha, existing + (pedido.total || 0));
+    });
+    
+    // Convertir a array y ordenar por fecha
+    ventasPorDia.value = Array.from(ventasPorDiaMap.entries())
+      .map(([fecha, total]) => ({ fecha, total }))
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
     estadisticas.value = {
       ventasTotales,
@@ -309,6 +434,20 @@ onMounted(() => {
                 <p class="text-xl font-bold text-gray-900">{{ estadisticas.pedidosCancelados }}</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Gráfico de ventas por día -->
+        <div class="rounded-xl bg-white p-6 shadow-md mb-6">
+          <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <Icon icon="mdi:chart-bar" class="h-5 w-5 text-emerald-600" />
+            Ventas por Día
+          </h3>
+          <div v-if="ventasPorDia.length === 0" class="text-center py-8 text-gray-500">
+            No hay datos de ventas para mostrar
+          </div>
+          <div v-else class="h-72">
+            <Bar :data="chartData" :options="chartOptions" />
           </div>
         </div>
 

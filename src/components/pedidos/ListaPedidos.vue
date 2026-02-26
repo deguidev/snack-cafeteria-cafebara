@@ -61,6 +61,9 @@ const pedidoSeleccionado = ref<Pedido | null>(null);
 const mostrarModal = ref(false);
 const montoRecibido = ref<number>(0);
 
+// Filtro de estado (todos, pendiente, entregado, pagado)
+const filtroEstado = ref<'todos' | 'pendiente' | 'entregado' | 'pagado'>('todos');
+
 // Filtro de fecha (por defecto hoy)
 const fechaSeleccionada = ref(new Date().toISOString().split('T')[0]);
 
@@ -160,56 +163,55 @@ const cargarPedidos = async () => {
   }
 };
 
-// Agrupar pedidos por estado con metadata (4 estados principales)
+// Agrupar pedidos por estado con metadata (3 estados: pendiente, entregado, pagado)
 const pedidosAgrupados = computed(() => {
+  // Filtrar pedidos según el filtro seleccionado
+  const pedidosFiltrados = filtroEstado.value === 'todos' 
+    ? pedidos.value 
+    : pedidos.value.filter(p => p.estado === filtroEstado.value);
+
+  // Pendientes: ordenar por created_at DESC (último registrado primero)
+  const pendientes = pedidosFiltrados
+    .filter(p => p.estado === 'pendiente')
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  
+  // Entregados: ordenar por created_at DESC (último registrado primero)
+  const entregados = pedidosFiltrados
+    .filter(p => p.estado === 'entregado')
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  
+  // Pagados: orden normal (primero registrado primero)
+  const pagados = pedidosFiltrados
+    .filter(p => p.estado === 'pagado')
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
   const estados = [
     { 
       id: 'pendiente', 
       title: 'Pendientes', 
       icon: 'mdi:clock-outline', 
-      color: 'text-yellow-600',
-      bgColor: 'bg-yellow-50',
-      pedidos: pedidos.value.filter(p => p.estado === 'pendiente')
-    },
-    { 
-      id: 'en_preparacion', 
-      title: 'En Preparación', 
-      icon: 'mdi:chef-hat', 
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-50',
-      pedidos: pedidos.value.filter(p => p.estado === 'en_preparacion')
-    },
-    { 
-      id: 'listo', 
-      title: 'Listos', 
-      icon: 'mdi:check-circle', 
-      color: 'text-green-600',
-      bgColor: 'bg-green-50',
-      pedidos: pedidos.value.filter(p => p.estado === 'listo')
+      color: 'text-amber-600',
+      bgColor: 'bg-amber-50',
+      cardBg: 'bg-amber-50 border-amber-300',
+      pedidos: pendientes
     },
     { 
       id: 'entregado', 
       title: 'Entregados', 
       icon: 'mdi:hand-okay', 
-      color: 'text-emerald-600',
-      bgColor: 'bg-emerald-50',
-      pedidos: pedidos.value.filter(p => p.estado === 'entregado')
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-50',
+      cardBg: 'bg-blue-50 border-blue-300',
+      pedidos: entregados
     },
     { 
       id: 'pagado', 
       title: 'Pagados', 
       icon: 'mdi:cash-check', 
-      color: 'text-teal-600',
-      bgColor: 'bg-teal-50',
-      pedidos: pedidos.value.filter(p => p.estado === 'pagado')
-    },
-    { 
-      id: 'cancelado', 
-      title: 'Cancelados', 
-      icon: 'mdi:close-circle', 
-      color: 'text-red-600',
-      bgColor: 'bg-red-50',
-      pedidos: pedidos.value.filter(p => p.estado === 'cancelado')
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50',
+      cardBg: 'bg-emerald-50 border-emerald-300',
+      pedidos: pagados
     }
   ];
   
@@ -480,6 +482,70 @@ onMounted(() => {
       </div>
     </header>
 
+    <!-- Filtros de estado -->
+    <div class="bg-amber-100/80 border-b border-amber-200">
+      <div class="mx-auto max-w-7xl px-2 py-2 sm:px-4">
+        <div class="grid grid-cols-4 gap-1 sm:gap-2">
+          <button
+            @click="filtroEstado = 'todos'"
+            :class="[
+              'px-2 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors',
+              filtroEstado === 'todos' 
+                ? 'bg-amber-800 text-white shadow-md' 
+                : 'bg-amber-200/80 text-amber-800 hover:bg-amber-300'
+            ]"
+          >
+            <span class="flex items-center justify-center gap-1">
+              <Icon icon="mdi:view-list" class="h-4 w-4" />
+              <span class="hidden sm:inline">Todos</span>
+            </span>
+          </button>
+          <button
+            @click="filtroEstado = 'pendiente'"
+            :class="[
+              'px-2 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors',
+              filtroEstado === 'pendiente' 
+                ? 'bg-amber-600 text-white shadow-md' 
+                : 'bg-amber-200/80 text-amber-800 hover:bg-amber-300'
+            ]"
+          >
+            <span class="flex items-center justify-center gap-1">
+              <Icon icon="mdi:clock-outline" class="h-4 w-4" />
+              <span class="hidden sm:inline">Pendientes</span>
+            </span>
+          </button>
+          <button
+            @click="filtroEstado = 'entregado'"
+            :class="[
+              'px-2 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors',
+              filtroEstado === 'entregado' 
+                ? 'bg-blue-600 text-white shadow-md' 
+                : 'bg-amber-200/80 text-amber-800 hover:bg-amber-300'
+            ]"
+          >
+            <span class="flex items-center justify-center gap-1">
+              <Icon icon="mdi:hand-okay" class="h-4 w-4" />
+              <span class="hidden sm:inline">Entregados</span>
+            </span>
+          </button>
+          <button
+            @click="filtroEstado = 'pagado'"
+            :class="[
+              'px-2 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors',
+              filtroEstado === 'pagado' 
+                ? 'bg-emerald-600 text-white shadow-md' 
+                : 'bg-amber-200/80 text-amber-800 hover:bg-amber-300'
+            ]"
+          >
+            <span class="flex items-center justify-center gap-1">
+              <Icon icon="mdi:cash-check" class="h-4 w-4" />
+              <span class="hidden sm:inline">Pagados</span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Contenedor principal -->
     <div class="mx-auto max-w-7xl px-2 py-4 sm:px-4 sm:py-6">
       <!-- Loading -->
@@ -501,8 +567,8 @@ onMounted(() => {
             <div
               v-for="pedido in estadoGroup.pedidos"
               :key="pedido.id"
-              class="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200 overflow-hidden"
-              :class="{ 'opacity-75': estadoGroup.id === 'entregado' }"
+              class="rounded-lg sm:rounded-xl shadow-sm border hover:shadow-md transition-all duration-200 overflow-hidden"
+              :class="[estadoGroup.cardBg, { 'opacity-75': estadoGroup.id === 'entregado' }]"
             >
               <PedidoCard :pedido="pedido" @ver-detalles="verDetallesPedido" @cambiar-estado="cambiarEstado" @editar-pedido="editarPedido" @procesar-pago="procesarPagoInline" @pago-completado="cargarPedidos" />
             </div>
