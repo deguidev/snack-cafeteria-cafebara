@@ -12,6 +12,9 @@ interface Restaurante {
   ruc: string | null;
   moneda: string;
   activo: boolean;
+  horario_apertura: string | null;
+  horario_cierre: string | null;
+  dias_operacion: string | null;
 }
 
 interface User {
@@ -49,25 +52,49 @@ const currentUser = ref<User>({
 
 const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin');
 
+// Formatear horario para mostrar
+const formatearHorario = (horario: string | null) => {
+  if (!horario) return '';
+  // Convertir de formato HH:MM:SS a HH:MM AM/PM
+  const [hours, minutes] = horario.split(':');
+  const h = parseInt(hours);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${minutes} ${ampm}`;
+};
+
+const horarioAtencion = computed(() => {
+  if (!restaurante.value?.horario_apertura || !restaurante.value?.horario_cierre) return null;
+  const apertura = formatearHorario(restaurante.value.horario_apertura);
+  const cierre = formatearHorario(restaurante.value.horario_cierre);
+  const dias = restaurante.value.dias_operacion || 'Lun-Dom';
+  return `${dias} ${apertura} - ${cierre}`;
+});
+
 const fetchRestaurantes = async () => {
   try {
     loading.value = true;
+    // Cargar el primer restaurante disponible
     const { data, error } = await supabase
       .from('restaurantes')
       .select('*')
-      .order('nombre');
+      .order('created_at', { ascending: true })
+      .limit(1);
 
-    if (error) throw error;
-    restaurantes.value = data || [];
+    if (error) {
+      console.error('Error en consulta:', error);
+      throw error;
+    }
     
-    // Seleccionar primer restaurante activo por defecto
-    const activeRestaurant = restaurantes.value.find(r => r.activo) || restaurantes.value[0];
-    if (activeRestaurant) {
-      selectedRestaurantId.value = activeRestaurant.id;
-      restaurante.value = activeRestaurant;
+    console.log('Datos restaurante:', data);
+    
+    if (data && data.length > 0) {
+      restaurante.value = data[0];
+      restaurantes.value = data;
+      selectedRestaurantId.value = data[0].id;
     }
   } catch (err) {
-    console.error('Error fetching restaurantes:', err);
+    console.error('Error fetching restaurante:', err);
   } finally {
     loading.value = false;
   }
@@ -193,17 +220,17 @@ onMounted(() => {
 
           <!-- Info Badges -->
           <div class="info-badges">
-            <div class="info-badge">
+            <div v-if="restaurante.direccion" class="info-badge">
               <Icon icon="mdi:map-marker" class="h-4 w-4" />
               <span>{{ restaurante.direccion }}</span>
+            </div>
+            <div v-if="horarioAtencion" class="info-badge">
+              <Icon icon="mdi:clock-outline" class="h-4 w-4" />
+              <span>{{ horarioAtencion }}</span>
             </div>
             <div v-if="restaurante.telefono" class="info-badge">
               <Icon icon="mdi:phone" class="h-4 w-4" />
               <span>{{ restaurante.telefono }}</span>
-            </div>
-            <div v-if="restaurante.ruc" class="info-badge">
-              <Icon icon="mdi:file-document" class="h-4 w-4" />
-              <span>RUC: {{ restaurante.ruc }}</span>
             </div>
           </div>
         </div>
